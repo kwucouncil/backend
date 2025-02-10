@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const cors = require('cors');
 
 const loadData = (filename) => {
   const filePath = path.resolve(process.cwd(), 'data', filename);
@@ -7,15 +8,19 @@ const loadData = (filename) => {
 };
 
 // 서버리스 함수로 API 정의
-export default async (req, res) => {
-  // CORS 헤더 설정
-  res.setHeader('Access-Control-Allow-Origin', 'https://kwucouncil.github.io');  // 프론트엔드 도메인
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+const corsMiddleware = cors({
+  origin: 'https://kwucouncil.github.io',  // 프론트엔드 도메인 허용
+  methods: ['POST', 'OPTIONS'],            // 허용할 메서드
+  allowedHeaders: ['Content-Type'],        // 허용할 헤더
+  credentials: false,                      // 인증 정보 사용 시 true로 설정 가능
+});
 
-  // OPTIONS 요청 처리 (프리플라이트 요청)
+export default async (req, res) => {
+  // CORS 설정 적용
+  await new Promise((resolve) => corsMiddleware(req, res, resolve));
+
   if (req.method === 'OPTIONS') {
-    return res.status(200).end();  // 200 상태로 OPTIONS 요청 응답
+    return res.status(200).end();  // OPTIONS 요청에 대해 200 응답 반환
   }
 
   if (req.method !== 'POST') {
@@ -29,7 +34,6 @@ export default async (req, res) => {
 
   try {
     if (birth_date) {
-      // 신입생 확인
       const freshmenData = loadData('freshmen.json');
       const result = freshmenData.find(freshman => freshman.name === name && freshman.birth_date === birth_date);
       if (result) {
@@ -38,7 +42,6 @@ export default async (req, res) => {
         return res.status(404).json({ found: false, message: '신입생 정보를 찾을 수 없습니다.' });
       }
     } else if (student_id) {
-      // 재학생 확인
       const studentsData = loadData('students.json');
       const result = studentsData.find(student => student.name === name && student.student_id === student_id);
       if (result) {
