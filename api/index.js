@@ -6,9 +6,18 @@ const loadData = (filename) => {
   return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
 };
 
-
 // 서버리스 함수로 API 정의
 export default async (req, res) => {
+  // CORS 헤더 설정
+  res.setHeader('Access-Control-Allow-Origin', 'https://kwucouncil.github.io');  // 프론트엔드 도메인
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  // OPTIONS 요청 처리 (프리플라이트 요청)
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();  // 200 상태로 OPTIONS 요청 응답
+  }
+
   if (req.method !== 'POST') {
     return res.status(405).json({ message: 'POST 메서드만 허용됩니다.' });
   }
