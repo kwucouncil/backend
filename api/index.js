@@ -10,7 +10,11 @@ const loadData = (filename) => {
 // CORS 설정
 const corsMiddleware = cors({
   origin: (origin, callback) => {
-    const allowedOrigins = ['http://localhost:8080', 'https://kwucouncil.github.io'];
+    const allowedOrigins = [
+      'https://kwucouncil.github.io',
+      'http://localhost:8080',
+      'https://www.kwu-studentcouncil52.com'  // ✅ 정확한 HTTPS 도메인 허용
+    ];
     if (!origin || allowedOrigins.includes(origin)) {
       console.log(`CORS 허용된 요청: ${origin}`);
       callback(null, true);
@@ -57,25 +61,39 @@ export default async (req, res) => {
       return res.status(400).json({ message: '이름과 필요한 정보를 입력해 주세요.' });
     }
 
-    // 비즈니스 로직 (신입생 및 재학생 확인)
     try {
+      let responseData = {};
+
       if (birth_date) {
         console.log('신입생 데이터 확인 시작');
         const freshmenData = loadData('freshmen.json');
         const result = freshmenData.find(freshman => freshman.name === name && freshman.birth_date === birth_date);
+
         if (result) {
-          return res.status(200).json({ found: true, message: '신입생 정보가 확인되었습니다.' });
+          responseData = {
+            is_form: result.is_form,
+            is_cost: result.is_cost,
+            result: result.is_form && result.is_cost ? true : false  // 조건에 따라 result 결정
+          };
+          return res.status(200).json(responseData);
         } else {
-          return res.status(404).json({ found: false, message: '신입생 정보를 찾을 수 없습니다.' });
+          return res.status(404).json({ message: '신입생 정보를 찾을 수 없습니다.' });
         }
+
       } else if (student_id) {
         console.log('재학생 데이터 확인 시작');
         const studentsData = loadData('students.json');
         const result = studentsData.find(student => student.name === name && student.student_id === student_id);
+
         if (result) {
-          return res.status(200).json({ found: true, message: '재학생 정보가 확인되었습니다.' });
+          responseData = {
+            is_form: result.is_form,
+            is_cost: result.is_cost,
+            result: result.is_form && result.is_cost ? true : false  // 조건에 따라 result 결정
+          };
+          return res.status(200).json(responseData);
         } else {
-          return res.status(404).json({ found: false, message: '재학생 정보를 찾을 수 없습니다.' });
+          return res.status(404).json({ message: '재학생 정보를 찾을 수 없습니다.' });
         }
       }
     } catch (dataError) {
