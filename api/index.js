@@ -1,107 +1,34 @@
-const fs = require('fs');
-const path = require('path');
+// api/index.js
+const express = require('express');
 const cors = require('cors');
+require('dotenv').config();
 
-const loadData = (filename) => {
-  const filePath = path.resolve(process.cwd(), 'data', filename);
-  return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-};
+const app = express();
 
-// CORS 설정
+// CORS (기존 화이트리스트 유지)
 const corsMiddleware = cors({
-  origin: (origin, callback) => {
-    const allowedOrigins = [
+  origin: (origin, cb) => {
+    const allow = [
       'https://kwucouncil.github.io',
       'http://localhost:8080',
-      'https://www.kwu-studentcouncil52.com'  // ✅ 정확한 HTTPS 도메인 허용
+      'https://www.kwu-studentcouncil52.com',
     ];
-    if (!origin || allowedOrigins.includes(origin)) {
-      console.log(`CORS 허용된 요청: ${origin}`);
-      callback(null, true);
-    } else {
-      console.error(`CORS 차단된 요청: ${origin}`);
-      callback(new Error('CORS 정책 위반'));
-    }
+    if (!origin || allow.includes(origin)) return cb(null, true);
+    cb(new Error('CORS 정책 위반'));
   },
-  methods: ['POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'X-Requested-With'],  // ✅ 헤더 허용
-  credentials: false,
+  methods: ['GET','POST','OPTIONS'],
+  allowedHeaders: ['Content-Type','X-Requested-With'],
 });
 
-export default async (req, res) => {
-  try {
-    console.log(`요청 메서드: ${req.method}, 요청 URL: ${req.url}`);
+app.use(express.json());
+app.use(corsMiddleware);
 
-    // CORS 처리
-    await new Promise((resolve, reject) => corsMiddleware(req, res, (err) => {
-      if (err) {
-        console.error('CORS 미들웨어 오류:', err);
-        res.status(403).json({ message: 'CORS 오류: 요청이 차단되었습니다.' });
-        return reject(err);  // 흐름 종료
-      }
-      resolve();
-    }));
+// 헬스체크
+app.get('/', (_, res) => res.send('OK'));
 
-    // OPTIONS 요청 처리
-    if (req.method === 'OPTIONS') {
-      console.log('OPTIONS 요청 성공');
-      return res.status(200).end();
-    }
+// ✅ 라우트 연결 (이미 구현됨)
+app.use('/upload', require('./upload'));          // /upload 라우터
+app.use('/announcements', require('./announcements')); // /announcements 라우터
 
-    // POST 메서드 이외의 요청 거부
-    if (req.method !== 'POST') {
-      console.warn('허용되지 않은 메서드 요청');
-      return res.status(405).json({ message: 'POST 메서드만 허용됩니다.' });
-    }
-
-    // 요청 데이터 검증
-    const { name, birth_date, student_id } = req.body;
-    if (!name || (!birth_date && !student_id)) {
-      console.warn('필수 데이터 누락');
-      return res.status(400).json({ message: '이름과 필요한 정보를 입력해 주세요.' });
-    }
-
-    try {
-      let responseData = {};
-
-      if (birth_date) {
-        console.log('신입생 데이터 확인 시작');
-        const freshmenData = loadData('freshmen.json');
-        const result = freshmenData.find(freshman => freshman.name === name && freshman.birth_date === birth_date);
-
-        if (result) {
-          responseData = {
-            is_form: result.is_form,
-            is_cost: result.is_cost,
-            result: result.is_form && result.is_cost ? true : false  // 조건에 따라 result 결정
-          };
-          return res.status(200).json(responseData);
-        } else {
-          return res.status(404).json({ message: '신입생 정보를 찾을 수 없습니다.' });
-        }
-
-      } else if (student_id) {
-        console.log('재학생 데이터 확인 시작');
-        const studentsData = loadData('students.json');
-        const result = studentsData.find(student => student.name === name && student.student_id === student_id);
-
-        if (result) {
-          responseData = {
-            is_form: result.is_form,
-            is_cost: result.is_cost,
-            result: result.is_form && result.is_cost ? true : false  // 조건에 따라 result 결정
-          };
-          return res.status(200).json(responseData);
-        } else {
-          return res.status(404).json({ message: '재학생 정보를 찾을 수 없습니다.' });
-        }
-      }
-    } catch (dataError) {
-      console.error('데이터 처리 오류:', dataError);
-      return res.status(500).json({ message: '데이터 처리 중 오류가 발생했습니다.', error: dataError.message });
-    }
-  } catch (serverError) {
-    console.error('서버 오류:', serverError);
-    return res.status(500).json({ message: '서버 오류가 발생했습니다.', error: serverError.message });
-  }
-};
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`API listening on :${PORT}`));
