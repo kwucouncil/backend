@@ -23,7 +23,7 @@ const corsMiddleware = cors({
 
 router.options('/', corsMiddleware);
 
-router.post('/', corsMiddleware, upload.single('image'), async (req, res) => {
+router.post('/', corsMiddleware, upload.single('file'), async (req, res) => {
   try {
     const file = req.file;
     if (!file) return res.status(400).json({ message: '파일이 없습니다.' });
@@ -42,7 +42,7 @@ router.post('/', corsMiddleware, upload.single('image'), async (req, res) => {
     }
 
     const { data: pub } = supabase.storage.from(bucket).getPublicUrl(path);
-    return res.status(200).json({ message: '업로드 성공', url: pub.publicUrl, path });
+    return res.status(200).json({ url: pub.publicUrl, path });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: '서버 오류', error: err.message });
