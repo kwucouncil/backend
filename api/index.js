@@ -30,6 +30,7 @@ app.get('/', (_, res) => res.send('OK'));
 app.use('/upload', require('./upload'));          // /upload 라우터
 app.use('/announcements', require('./announcements')); // /announcements 라우터
 app.use('/minutes', require('./minutes'));        // /minutes 라우터
+app.use('/predictions', require('./predictions')); // /predictions 라우터
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`API listening on :${PORT}`));
