@@ -1,0 +1,10 @@
+[
+    {"idx":0,"id":1,"name":"경영대학","name_eng":"College of Business","logo_url":null,"created_at":"2025-09-01 02:43:08.073141+00"},
+    {"idx":1,"id":2,"name":"자연과학대학","name_eng":"College of Natural Sciences","logo_url":null,"created_at":"2025-09-01 02:43:08.073141+00"},
+    {"idx":2,"id":3,"name":"공과대학","name_eng":"College of Engineering","logo_url":null,"created_at":"2025-09-01 02:43:08.073141+00"},
+    {"idx":3,"id":4,"name":"인공지능융합대학","name_eng":"College of AI Convergence","logo_url":null,"created_at":"2025-09-01 02:43:08.073141+00"},
+    {"idx":4,"id":5,"name":"인문사회과학대학","name_eng":"College of Humanities & Social Sciences","logo_url":null,"created_at":"2025-09-01 02:43:08.073141+00"},
+    {"idx":5,"id":6,"name":"전자정보공과대학","name_eng":"College of Electronic & Information Engineering","logo_url":null,"created_at":"2025-09-01 02:43:08.073141+00"},
+    {"idx":6,"id":7,"name":"정책법학대학","name_eng":"College of Public Policy & Law","logo_url":null,"created_at":"2025-09-01 02:43:08.073141+00"},
+    {"idx":7,"id":8,"name":"인제니움대학","name_eng":"Ingenium College (Liberal Studies)","logo_url":null,"created_at":"2025-09-01 02:43:08.073141+00"}
+]
