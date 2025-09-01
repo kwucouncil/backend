@@ -548,3 +548,34 @@ curl -X POST -F "file=@document.pdf" "https://api.example.com/api/upload"
 ## 🔄 API 버전 관리
 
 현재 버전: **v1.5**
+
+## API 엔드포인트에서의 match 파라미터
+
+### 1. **경로 파라미터 (Path Parameter)**
+- **`/api/sports2025/matches/:match_id`** - 특정 경기 조회
+  - `match_id`: 경기 ID (숫자)
+
+### 2. **쿼리 파라미터 (Query Parameters)**
+- **`/api/sports2025/matches`** - 경기 목록 조회에서 사용되는 파라미터들:
+  - `date`: 경기 날짜 필터
+  - `sport_id`: 종목 ID 필터  
+  - `sport`: 종목명 필터
+  - `college_id`: 대학 ID 필터
+  - `department_id`: 학과 ID 필터
+  - `played`: 경기 완료 여부 필터
+  - `rain`: 우천 취소 여부 필터
+  - `page`: 페이지 번호 (기본값: 1)
+  - `page_size`: 페이지 크기 (기본값: 20, 최대: 100)
+  - `sort`: 정렬 기준 (기본값: 'date,start')
+  - `order`: 정렬 순서 (기본값: 'asc')
+
+### 3. **데이터베이스 테이블**
+- `match` 테이블: 경기 정보를 저장하는 메인 테이블
+- `participation` 테이블: 경기에 참여하는 팀 정보 (home/away)
+
+### 4. **예시 사용법**
+```bash
+<code_block_to_apply_changes_from>
+```
+
+현재 `match` 파라미터는 주로 경기 관련 API에서 경기 ID나 경기 목록 필터링에 사용되고 있습니다.
