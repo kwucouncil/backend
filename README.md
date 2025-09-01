@@ -8,6 +8,7 @@
 - **파일 업로드**: 이미지 및 문서 파일 업로드
 - **회의록 관리**: 회의록 CRUD API
 - **승부예측 관리**: 학생 승부예측 제출 및 관리 API
+- **스포츠 대회 관리**: 경기 일정, 순위, 학과/종목 정보 API
 - **시스템 검증**: 시스템 상태 확인
 
 ## 📁 프로젝트 구조
@@ -20,6 +21,7 @@ backend-main/
 │   ├── upload.js         # 파일 업로드 API
 │   ├── minutes.js        # 회의록 API
 │   ├── predictions.js    # 승부예측 API
+│   ├── sports2025.js     # 스포츠 대회 API
 │   └── verifySystem.js   # 시스템 검증 API
 ├── lib/
 │   └── supabaseClient.js # Supabase 클라이언트
@@ -29,6 +31,7 @@ backend-main/
 │   └── prediction.js     # 승부예측 유효성 검사
 ├── supabase_setup.sql     # 데이터베이스 테이블 생성 스크립트
 ├── PREDICTIONS_API_README.md # 승부예측 API 상세 문서
+├── SPORTS2025_API_SPEC.md # 스포츠 대회 API 명세서
 └── package.json
 ```
 

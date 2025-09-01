@@ -235,7 +235,7 @@ router.get('/matches/:match_id', corsMiddleware, async (req, res) => {
  */
 router.get('/standings', corsMiddleware, async (req, res) => {
   try {
-    const { sport_id, limit = 20 } = req.query;
+    const { sport_id } = req.query;
 
     // standings 테이블이 없으므로 participation에서 집계
     let query = supabase
@@ -244,7 +244,8 @@ router.get('/standings', corsMiddleware, async (req, res) => {
         department:department(id, name, name_eng, logo_url),
         match!inner(
           sport:sport(id, name, name_eng),
-          is_played
+          is_played,
+          updated_at
         ),
         score
       `)
@@ -258,8 +259,10 @@ router.get('/standings', corsMiddleware, async (req, res) => {
 
     if (error) throw error;
 
-    // 부서별 점수 집계
+    // 부서별 점수 집계 및 최신 업데이트 시간 추적
     const departmentScores = {};
+    let latestUpdateTime = null;
+    
     (data || []).forEach(participation => {
       const deptId = participation.department?.id;
       if (deptId) {
@@ -273,13 +276,20 @@ router.get('/standings', corsMiddleware, async (req, res) => {
         }
         departmentScores[deptId].totalScore += participation.score || 0;
         departmentScores[deptId].matches += 1;
+        
+        // 최신 업데이트 시간 추적
+        if (participation.match?.updated_at) {
+          const updateTime = new Date(participation.match.updated_at);
+          if (!latestUpdateTime || updateTime > latestUpdateTime) {
+            latestUpdateTime = updateTime;
+          }
+        }
       }
     });
 
-    // 점수순으로 정렬
+    // 점수순으로 정렬 (모든 학과 포함)
     const sortedStandings = Object.values(departmentScores)
-      .sort((a, b) => b.totalScore - a.totalScore)
-      .slice(0, parseInt(limit));
+      .sort((a, b) => b.totalScore - a.totalScore);
 
     // 순위 데이터 변환
     const transformedStandings = sortedStandings.map((standing, index) => ({
@@ -290,9 +300,24 @@ router.get('/standings', corsMiddleware, async (req, res) => {
       score: standing.totalScore
     }));
 
+    // 한국 시간으로 포맷팅
+    const formatKoreanTime = (date) => {
+      if (!date) return null;
+      
+      const koreanTime = new Date(date.toLocaleString("en-US", {timeZone: "Asia/Seoul"}));
+      const year = koreanTime.getFullYear();
+      const month = koreanTime.getMonth() + 1;
+      const day = koreanTime.getDate();
+      const hour = koreanTime.getHours();
+      const ampm = hour < 12 ? '오전' : '오후';
+      const displayHour = hour < 12 ? hour : hour - 12;
+      
+      return `${year}년 ${month.toString().padStart(2, '0')}월 ${day.toString().padStart(2, '0')}일 ${ampm} ${displayHour}시 기준`;
+    };
+
     res.json({ 
       sport_id: sport_id ? parseInt(sport_id) : null,
-      limit: parseInt(limit),
+      updated_at: latestUpdateTime ? formatKoreanTime(latestUpdateTime) : null,
       standings: transformedStandings
     });
 
@@ -397,6 +422,86 @@ router.get('/sports', corsMiddleware, async (req, res) => {
 });
 
 /**
+ * 풋살 리그전 순위 조회
+ * GET /api/sports2025/futsal-standings
+ */
+router.get('/futsal-standings', corsMiddleware, async (req, res) => {
+  try {
+    // futsal_standings 테이블에서 데이터 조회
+    let query = supabase
+      .from('futsal_standings')
+      .select(`
+        *,
+        department:department(id, name, name_eng, logo_url)
+      `)
+      .order('group_name, points', { ascending: [true, false] });
+
+    const { data, error } = await query;
+
+    if (error) throw error;
+
+    // 그룹별로 정렬
+    const groupedStandings = {};
+    (data || []).forEach(standing => {
+      const groupName = standing.group_name || 'A조';
+      
+      if (!groupedStandings[groupName]) {
+        groupedStandings[groupName] = [];
+      }
+      
+      groupedStandings[groupName].push({
+        rank: standing.rank || 0,
+        name: standing.department?.name || '',
+        name_eng: standing.department?.name_eng || '',
+        logo: standing.department?.logo_url || '',
+        group: standing.group_name || 'A조',
+        matches: standing.matches || 0,
+        wins: standing.wins || 0,
+        draws: standing.draws || 0,
+        losses: standing.losses || 0,
+        goals_for: standing.goals_for || 0,
+        goals_against: standing.goals_against || 0,
+        goal_difference: standing.goal_difference || 0,
+        points: standing.points || 0,
+        wildcard: standing.wildcard || false
+      });
+    });
+
+    // 각 그룹 내에서 순위 재계산
+    Object.keys(groupedStandings).forEach(groupName => {
+      const group = groupedStandings[groupName];
+      group.sort((a, b) => {
+        // 1차: 승점
+        if (b.points !== a.points) return b.points - a.points;
+        // 2차: 득실차
+        if (b.goal_difference !== a.goal_difference) return b.goal_difference - a.goal_difference;
+        // 3차: 다득점
+        if (b.goals_for !== a.goals_for) return b.goals_for - a.goals_for;
+        // 4차: 승수
+        return b.wins - a.wins;
+      });
+      
+      // 순위 부여
+      group.forEach((standing, index) => {
+        standing.rank = index + 1;
+      });
+    });
+
+    res.json({ 
+      standings: groupedStandings,
+      total_teams: Object.values(groupedStandings).flat().length
+    });
+
+  } catch (err) {
+    console.error('풋살 리그전 순위 조회 오류:', err);
+    res.status(500).json({ 
+      message: '서버 오류', 
+      error: err.message 
+    });
+  }
+});
+
+/**
  * 경기장 목록 조회
  * GET /api/sports2025/venues
  */
@@ -413,6 +518,70 @@ router.get('/venues', corsMiddleware, async (req, res) => {
 
   } catch (err) {
     console.error('경기장 목록 조회 오류:', err);
+    res.status(500).json({ 
+      message: '서버 오류', 
+      error: err.message 
+    });
+  }
+});
+
+/**
+ * 종목별 경기장 정보 조회
+ * GET /api/sports2025/sport-venues
+ */
+router.get('/sport-venues', corsMiddleware, async (req, res) => {
+  try {
+    // 종목별 경기장 매핑 정보
+    const sportVenues = {
+      "풋살": {
+        name: "교내 풋살장",
+        location_note: "체육관 1층",
+        description: "실내 풋살 경기장"
+      },
+      "농구": {
+        name: "교내 농구장",
+        location_note: "체육관 2층",
+        description: "실내 농구 경기장"
+      },
+      "피구": {
+        name: "교내 농구장",
+        location_note: "체육관 2층",
+        description: "농구장에서 피구 경기 진행"
+      },
+      "족구": {
+        name: "교내 농구장",
+        location_note: "체육관 2층",
+        description: "농구장에서 족구 경기 진행"
+      },
+      "탁구": {
+        name: "교내 탁구장",
+        location_note: "체육관 3층",
+        description: "실내 탁구 경기장"
+      },
+      "줄다리기": {
+        name: "광운스퀘어",
+        location_note: "교내 중앙 광장",
+        description: "야외 줄다리기 경기장"
+      },
+      "LOL": {
+        name: "레드포스 광운대점",
+        location_note: "교내 PC방",
+        description: "리그 오브 레전드 e스포츠 경기장"
+      },
+      "FC온라인": {
+        name: "레드포스 광운대점",
+        location_note: "교내 PC방",
+        description: "피파 온라인 e스포츠 경기장"
+      }
+    };
+
+    res.json({ 
+      sport_venues: sportVenues,
+      total_sports: Object.keys(sportVenues).length
+    });
+
+  } catch (err) {
+    console.error('종목별 경기장 정보 조회 오류:', err);
     res.status(500).json({ 
       message: '서버 오류', 
       error: err.message 
