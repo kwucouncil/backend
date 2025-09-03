@@ -65,7 +65,7 @@ router.get('/matches', corsMiddleware, async (req, res) => {
 
     // 필터 적용
     if (date) {
-      query = query.eq('date', date);
+      query = query.eq('match_date', date);
     }
 
     if (sport_id) {
@@ -96,7 +96,13 @@ router.get('/matches', corsMiddleware, async (req, res) => {
     
     sortFields.forEach((field, index) => {
       const orderDirection = orderFields[index] || 'asc';
-      query = query.order(field, { ascending: orderDirection === 'asc' });
+      // 필드명 매핑 (API 필드명 -> DB 컬럼명)
+      const fieldMapping = {
+        'date': 'match_date',
+        'start': 'period_start'
+      };
+      const dbField = fieldMapping[field] || field;
+      query = query.order(dbField, { ascending: orderDirection === 'asc' });
     });
 
     const { data, error, count } = await query.range(from, to);
