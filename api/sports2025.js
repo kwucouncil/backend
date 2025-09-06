@@ -300,72 +300,90 @@ router.get('/matches/:match_id', corsMiddleware, async (req, res) => {
 router.get('/standings', corsMiddleware, async (req, res) => {
   try {
     const { sport_id } = req.query;
+    const sportIdNum = sport_id ? parseInt(sport_id, 10) : null;
 
-    // department에서 점수 가져오기
-    let query = supabase
+    // 1) department의 점수/정보 읽기
+    const { data: departments, error: deptErr } = await supabase
       .from('department')
-      .select('id, name, name_eng, logo_url, score, updated_at');
+      .select('id, name, name_eng, logo_url, score');
+    if (deptErr) throw deptErr;
 
-    // 특정 종목만 필터링하고 싶으면 department <-> sport 매핑 필요
-    // (지금 스키마엔 department가 sport_id 직접 안 갖고 있을 수도 있음)
-    // sport_id 조건은 participation join을 써야 하지만,
-    // 요청하신 건 department.score 기준이므로 일단 무시하거나 전체 출력
-    
-    const { data, error } = await query;
+    // 2) sport_id가 온 경우: 해당 종목에 "참가 기록"이 있는 학과만 필터
+    let filteredDeptIds = null;
+    if (sportIdNum) {
+      const { data: partRows, error: partErr } = await supabase
+        .from('participation')
+        .select('department_id, match:match_id(sport_id)')
+        .eq('match.sport_id', sportIdNum);
+      if (partErr) throw partErr;
 
-    if (error) throw error;
+      filteredDeptIds = Array.from(new Set((partRows || []).map(r => r.department_id)));
+    }
 
-    // 최신 업데이트 시간 추적
-    let latestUpdateTime = null;
-    (data || []).forEach(dept => {
-      if (dept.updated_at) {
-        const updateTime = new Date(dept.updated_at);
-        if (!latestUpdateTime || updateTime > latestUpdateTime) {
-          latestUpdateTime = updateTime;
-        }
-      }
-    });
+    const depts = (departments || [])
+      .filter(d => (filteredDeptIds ? filteredDeptIds.includes(d.id) : true))
+      .map(d => ({
+        department_id: d.id,
+        name: d.name,
+        name_eng: d.name_eng || '',
+        logo: toEmbedUrl(d.logo_url || ''),
+        logo_raw: d.logo_url || '',
+        score: d.score ?? 0
+      }));
 
-    // 점수순으로 정렬
-    const sortedStandings = (data || []).sort((a, b) => (b.score || 0) - (a.score || 0));
+    // 3) 최신 업데이트 시간은 match.updated_at에서 가져오기
+    //    - sport_id가 있다면 해당 종목 내에서, 없으면 전체에서 최신 1건
+    let updQuery = supabase
+      .from('match')
+      .select('updated_at')
+      .order('updated_at', { ascending: false })
+      .limit(1);
 
-    // 순위 데이터 변환
-    const transformedStandings = sortedStandings.map((dept, index) => ({
-      rank: index + 1,
-      name: dept.name || '',
-      name_eng: dept.name_eng || '',
-      logo: toEmbedUrl(dept.logo_url || ''),
-      logo_raw: dept.logo_url || '',
-      score: dept.score || 0
+    if (sportIdNum) updQuery = updQuery.eq('sport_id', sportIdNum);
+
+    const { data: updRow, error: updErr } = await updQuery;
+    if (updErr) throw updErr;
+
+    const latestUpdateTime = updRow?.[0]?.updated_at ? new Date(updRow[0].updated_at) : null;
+
+    // 4) 점수순 정렬
+    depts.sort((a, b) => b.score - a.score);
+
+    // 5) 순위 매기기
+    const standings = depts.map((d, idx) => ({
+      rank: idx + 1,
+      name: d.name,
+      name_eng: d.name_eng,
+      logo: d.logo,
+      logo_raw: d.logo_raw,
+      score: d.score
     }));
 
-    // 한국 시간으로 포맷팅
+    // 6) 한국시간 포맷
     const formatKoreanTime = (date) => {
       if (!date) return null;
-      const koreanTime = new Date(date.toLocaleString("en-US", { timeZone: "Asia/Seoul" }));
-      const year = koreanTime.getFullYear();
-      const month = koreanTime.getMonth() + 1;
-      const day = koreanTime.getDate();
-      const hour = koreanTime.getHours();
-      const ampm = hour < 12 ? '오전' : '오후';
-      const displayHour = hour < 12 ? hour : hour - 12;
-      return `${year}년 ${month.toString().padStart(2, '0')}월 ${day.toString().padStart(2, '0')}일 ${ampm} ${displayHour}시 기준`;
+      const koreanTime = new Date(date.toLocaleString('en-US', { timeZone: 'Asia/Seoul' }));
+      const y = koreanTime.getFullYear();
+      const m = String(koreanTime.getMonth() + 1).padStart(2, '0');
+      const d = String(koreanTime.getDate()).padStart(2, '0');
+      const h = koreanTime.getHours();
+      const ampm = h < 12 ? '오전' : '오후';
+      const hh = h % 12 === 0 ? 12 : h % 12;
+      return `${y}년 ${m}월 ${d}일 ${ampm} ${hh}시 기준`;
     };
 
     res.json({
-      sport_id: sport_id ? parseInt(sport_id) : null,
+      sport_id: sportIdNum ?? null,
       updated_at: latestUpdateTime ? formatKoreanTime(latestUpdateTime) : null,
-      standings: transformedStandings
+      standings
     });
 
   } catch (err) {
-    console.error('순위 조회 오류:', err);
-    res.status(500).json({
-      message: '서버 오류',
-      error: err.message
-    });
+    console.error('standings 오류:', err);
+    res.status(500).json({ message: '서버 오류', error: err.message });
   }
 });
+
 
 
 /**
