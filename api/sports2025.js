@@ -88,13 +88,12 @@ router.get('/matches', corsMiddleware, async (req, res) => {
       order = 'asc'
     } = req.query;
 
-    // 페이지네이션
     const pageNum = Math.max(parseInt(page, 10) || 1, 1);
     const pageSize = Math.min(Math.max(parseInt(page_size, 10) || 20, 1), 100);
     const from = (pageNum - 1) * pageSize;
     const to = from + pageSize - 1;
 
-    // ⚠️ 포인트: 필터용 participation과 조회용 participation을 분리
+    // 핵심: 필터용 participation 과 전체 팀 조회용 participation 을 분리
     let query = supabase
       .from('match')
       .select(`
@@ -104,101 +103,72 @@ router.get('/matches', corsMiddleware, async (req, res) => {
         is_played,
         rain_canceled,
         updated_at,
-        sport:sport_id(name, name_eng, is_team_sport),
-        venue:venue_id(name, location_note),
-
-        -- 필터 전용 (INNER JOIN)
+        sport:sport_id(name,name_eng,is_team_sport),
+        venue:venue_id(name,location_note),
         filter_participation:participation!inner(
+          department_id,
           department:department(
-            id,
-            name,
-            name_eng,
-            logo_url,
-            college:college(
-              id,
-              name,
-              name_eng
-            )
+            id,name,name_eng,logo_url,
+            college_id,
+            college:college(id,name,name_eng)
           ),
           side,
           score
         ),
-
-        -- 응답용: 같은 경기의 모든 팀을 가져오기
         participations:participation(
           side,
           score,
           department:department(
-            id,
-            name,
-            name_eng,
-            logo_url,
-            college:college(
-              id,
-              name,
-              name_eng
-            )
+            id,name,name_eng,logo_url,
+            college_id,
+            college:college(id,name,name_eng)
           )
         )
       `, { count: 'exact' });
 
-    // 기본 정렬(교시 오름차순)
+    // 기본 정렬
     query = query.order('match_date', { ascending: true })
                  .order('period_start', { ascending: true });
 
-    // 필터 적용
-    if (date) {
-      query = query.eq('match_date', date);
-    }
+    // 날짜 / 종목
+    if (date)      query = query.eq('match_date', date);
+    if (sport_id)  query = query.eq('sport_id', parseInt(sport_id, 10));
+    else if (sport) query = query.eq('sport.name', sport);
 
-    if (sport_id) {
-      query = query.eq('sport_id', parseInt(sport_id, 10));
-    } else if (sport) {
-      // 관계 필드에 대한 필터
-      query = query.eq('sport.name', sport);
-    }
+    // 경기 상태
+    if (typeof played !== 'undefined') query = query.eq('is_played', String(played) === 'true');
+    if (typeof rain   !== 'undefined') query = query.eq('rain_canceled', String(rain) === 'true');
 
-    if (typeof played !== 'undefined') {
-      query = query.eq('is_played', String(played) === 'true');
-    }
-
-    if (typeof rain !== 'undefined') {
-      query = query.eq('rain_canceled', String(rain) === 'true');
-    }
-
-    // ✅ 중요한 부분: 학과/단과대 필터는 "filter_participation"에 건다
+    // 학과/단과대 필터는 "filter_participation" 경로에 건다
     if (department_id) {
-      query = query.eq('filter_participation.department.id', parseInt(department_id, 10));
+      query = query.eq('filter_participation.department_id', parseInt(department_id, 10));
     }
     if (college_id) {
-      query = query.eq('filter_participation.department.college.id', parseInt(college_id, 10));
+      // department의 FK 컬럼(college_id) 기준으로 필터
+      query = query.eq('filter_participation.department.college_id', parseInt(college_id, 10));
     }
 
-    // 추가 정렬 옵션 처리 (요청 파라미터로 커스텀 정렬 허용)
-    const sortFields = String(sort).split(',').map(s => s.trim()).filter(Boolean);
+    // 추가 정렬 옵션
+    const sortFields  = String(sort).split(',').map(s => s.trim()).filter(Boolean);
     const orderFields = String(order).split(',').map(s => s.trim().toLowerCase());
-    const fieldMapping = { date: 'match_date', start: 'period_start' };
-
-    sortFields.forEach((field, i) => {
-      const dbField = fieldMapping[field] || field;
+    const fieldMap = { date: 'match_date', start: 'period_start' };
+    sortFields.forEach((f, i) => {
+      const dbField = fieldMap[f] || f;
       const asc = (orderFields[i] || 'asc') === 'asc';
       query = query.order(dbField, { ascending: asc });
     });
 
-    // 페이지네이션
     const { data, error, count } = await query.range(from, to);
     if (error) throw error;
 
-    // 중복 제거(INNER JOIN으로 인해 동일 match가 중복될 수 있음)
+    // INNER JOIN로 인한 중복 제거
     const uniq = new Map();
-    (data || []).forEach(row => {
-      if (!uniq.has(row.id)) uniq.set(row.id, row);
-    });
+    (data || []).forEach(row => { if (!uniq.has(row.id)) uniq.set(row.id, row); });
     const rows = Array.from(uniq.values());
 
-    // 응답 변환: team1=home, team2=away
-    const items = rows.map(match => {
-      const teams = (match.participations || [])
+    // team1/home, team2/away 채우기
+    const items = rows.map(m => {
+      const teams = (m.participations || [])
         .filter(p => p?.department?.id)
         .map(p => ({
           side: p.side,
@@ -207,45 +177,37 @@ router.get('/matches', corsMiddleware, async (req, res) => {
           name: p.department.name || '',
           name_eng: p.department.name_eng || '',
           logo: toEmbedUrl(p.department.logo_url || ''),
-          logo_raw: p.department.logo_url || '',
+          logo_raw: p.department.logo_url || ''
         }));
 
-      const home = teams.find(t => t.side === 'home') || { id: null, name: '', name_eng: '', logo: '', logo_raw: '', score: 0 };
-      const away = teams.find(t => t.side === 'away') || { id: null, name: '', name_eng: '', logo: '', logo_raw: '', score: 0 };
+      const home = teams.find(t => t.side === 'home') || { id:null,name:'',name_eng:'',logo:'',logo_raw:'',score:0 };
+      const away = teams.find(t => t.side === 'away') || { id:null,name:'',name_eng:'',logo:'',logo_raw:'',score:0 };
 
       let win = null;
-      if (match.is_played && home.id && away.id && home.score !== away.score) {
+      if (m.is_played && home.id && away.id && home.score !== away.score) {
         win = home.score > away.score ? 'team1' : 'team2';
       }
 
       return {
-        date: match.match_date,
-        start: match.period_start,
-        place: match.venue?.name || '',
-        sport: match.sport?.name || '',
+        date: m.match_date,
+        start: m.period_start,
+        place: m.venue?.name || '',
+        sport: m.sport?.name || '',
         team1: { id: home.id, name: home.name, name_eng: home.name_eng, logo: home.logo, logo_raw: home.logo_raw, score: home.score },
         team2: { id: away.id, name: away.name, name_eng: away.name_eng, logo: away.logo, logo_raw: away.logo_raw, score: away.score },
-        rain: !!match.rain_canceled,
-        result: !!match.is_played,
+        rain: !!m.rain_canceled,
+        result: !!m.is_played,
         win
       };
     });
 
-    res.json({
-      page: pageNum,
-      page_size: pageSize,
-      total: count || 0,
-      items
-    });
-
+    res.json({ page: pageNum, page_size: pageSize, total: count || 0, items });
   } catch (err) {
     console.error('경기 일정 조회 오류:', err);
-    res.status(500).json({
-      message: '서버 오류',
-      error: err.message
-    });
+    res.status(500).json({ message: '서버 오류', error: err.message });
   }
 });
+
 
 
 /**
