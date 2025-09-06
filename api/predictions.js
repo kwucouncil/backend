@@ -24,15 +24,28 @@ const corsMiddleware = cors({
 router.options('/', corsMiddleware);
 router.options('/:id', corsMiddleware);
 
-/** 공용: 안전 문자열 변환 */
-const S = (v) => (v === null || v === undefined ? '' : String(v).trim());
+/* ------------------------- 유틸 ------------------------- */
+const S = (v) => (v == null ? '' : String(v).trim());
 
-/** 공용: 학과 이름/ID → department.id 정규화 */
-async function resolveDepartmentId(value, res) {
-  // null/빈문자열이면 null 허용(선택사항에 맞게 변경 가능)
-  if (value === null || value === undefined || value === '') return null;
+class HttpError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+}
 
-  // 이미 숫자/숫자문자열인 경우
+const normInput = (v) => {
+  // 단일 선택이어도 프론트 설정에 따라 배열로 올 수 있음 → 첫값만 사용
+  if (Array.isArray(v)) return v.length ? v[0] : '';
+  return v;
+};
+
+/** 학과 이름/ID → department.id 정규화 */
+async function resolveDepartmentId(raw) {
+  const value = normInput(raw);
+  if (value == null || value === '') return null;
+
+  // 숫자 또는 숫자 문자열
   const asNum = Number(String(value).trim());
   if (!Number.isNaN(asNum) && Number.isFinite(asNum)) return asNum;
 
@@ -45,8 +58,8 @@ async function resolveDepartmentId(value, res) {
     .select('id,name,name_eng')
     .or(`name.eq.${q},name_eng.eq.${q}`)
     .limit(1);
-  if (e1) throw e1;
-  if (exact && exact.length) return exact[0].id;
+  if (e1) throw new HttpError(500, e1.message);
+  if (exact?.length) return exact[0].id;
 
   // 부분 일치 (ilike)
   const { data: fuzzy, error: e2 } = await supabase
@@ -54,17 +67,13 @@ async function resolveDepartmentId(value, res) {
     .select('id,name,name_eng')
     .or(`name.ilike.%${q}%,name_eng.ilike.%${q}%`)
     .limit(1);
-  if (e2) throw e2;
-  if (!fuzzy || !fuzzy.length) {
-    // 400: 사용자가 보낸 학과를 못 찾음
-    res.status(400).json({ message: `학과를 찾을 수 없습니다: "${q}"` });
-    // throw가 아닌 조기 반환을 위해 특별 키워드 사용
-    return '__EARLY_RETURN__';
-  }
+  if (e2) throw new HttpError(500, e2.message);
+  if (!fuzzy?.length) throw new HttpError(400, `학과를 찾을 수 없습니다: "${q}"`);
   return fuzzy[0].id;
 }
 
-/** 목록 조회: GET /predictions?page=1&limit=10 (관리자만) */
+/* ------------------------- 목록(관리자) ------------------------- */
+/** GET /predictions?page=1&limit=10 */
 router.get('/', corsMiddleware, async (req, res) => {
   try {
     // 관리자 인증 (API 키)
@@ -88,12 +97,13 @@ router.get('/', corsMiddleware, async (req, res) => {
 
     res.json({ page, limit, total: count || 0, items: data || [] });
   } catch (err) {
-    console.error(err);
+    console.error('[GET /predictions] error =', err);
     res.status(500).json({ message: '서버 오류', error: err.message });
   }
 });
 
-/** 단건 조회: GET /predictions/:id (관리자만) */
+/* ------------------------- 단건(관리자) ------------------------- */
+/** GET /predictions/:id */
 router.get('/:id', corsMiddleware, async (req, res) => {
   try {
     const apiKey = req.headers['x-api-key'];
@@ -114,15 +124,18 @@ router.get('/:id', corsMiddleware, async (req, res) => {
 
     res.json({ data });
   } catch (err) {
-    console.error(err);
+    console.error('[GET /predictions/:id] error =', err);
     res.status(500).json({ message: '서버 오류', error: err.message });
   }
 });
 
-/** 승부예측 제출: POST /predictions */
+/* ------------------------- 제출(사용자) ------------------------- */
+/** POST /predictions */
 router.post('/', corsMiddleware, async (req, res) => {
   try {
-    const errors = validateCreate(req.body);
+    console.log('[POST /predictions] payload =', req.body);
+
+    const errors = typeof validateCreate === 'function' ? (validateCreate(req.body) || []) : [];
     if (errors.length) {
       return res.status(400).json({ message: '유효성 오류', errors });
     }
@@ -131,7 +144,7 @@ router.post('/', corsMiddleware, async (req, res) => {
       name,
       student_id,
       phone,
-      first_place,   // 이름 또는 ID(숫자/문자열)
+      first_place,   // 이름 또는 ID(숫자/문자열/배열 가능)
       second_place,
       third_place
     } = req.body;
@@ -148,47 +161,67 @@ router.post('/', corsMiddleware, async (req, res) => {
       return res.status(409).json({ message: '이미 제출된 학번입니다. 한 번만 제출 가능합니다.' });
     }
 
-    // 학과값 → department.id 정규화
-    const firstId  = await resolveDepartmentId(first_place, res);
-    if (firstId === '__EARLY_RETURN__') return;
-    const secondId = await resolveDepartmentId(second_place, res);
-    if (secondId === '__EARLY_RETURN__') return;
-    const thirdId  = await resolveDepartmentId(third_place, res);
-    if (thirdId === '__EARLY_RETURN__') return;
+    // 학과값 → department.id 정규화 (배열/문자열/숫자 모두 허용)
+    const [firstId, secondId, thirdId] = await Promise.all([
+      resolveDepartmentId(first_place),
+      resolveDepartmentId(second_place),
+      resolveDepartmentId(third_place),
+    ]);
 
-    // 저장 (bigint FK로 저장)
+    const insertPayload = {
+      name: S(name),
+      student_id: S(student_id),
+      phone: S(phone),
+      first_place: firstId,     // bigint FK (department.id)
+      second_place: secondId,   // bigint FK
+      third_place: thirdId,     // bigint FK
+      created_at: new Date().toISOString(),
+    };
+    console.log('[POST /predictions] insertPayload =', insertPayload);
+
     const { data, error } = await supabase
       .from('predictions')
-      .insert([{
-        name: S(name),
-        student_id: S(student_id),
-        phone: S(phone),
-        first_place: firstId,     // department.id
-        second_place: secondId,   // department.id
-        third_place: thirdId,     // department.id
-        created_at: new Date().toISOString()
-      }])
+      .insert([insertPayload])
       .select()
       .single();
 
-    if (error) throw error;
+    if (error) {
+      // 에러 코드 매핑
+      if (error.code === '23503') {
+        // FK 위반: 존재하지 않는 department.id
+        return res.status(400).json({ message: '존재하지 않는 학과 ID입니다.', detail: error.message });
+      }
+      if (error.code === '23505') {
+        // unique 위반 (예: student_id 유니크 인덱스가 있다면)
+        return res.status(409).json({ message: '이미 제출된 학번입니다.' });
+      }
+      if (error.code === '22P02') {
+        // 타입 변환 오류 (예: TEXT 컬럼인데 숫자 넣으려는 경우)
+        return res.status(400).json({ message: '잘못된 데이터 형식입니다.', detail: error.message });
+      }
+      throw error;
+    }
 
-    res.status(201).json({
+    return res.status(201).json({
       message: '승부예측 제출 완료',
       data: {
         id: data.id,
         name: data.name,
         student_id: data.student_id,
         phone: data.phone,
-        first_place: data.first_place,
+        first_place: data.first_place,   // 저장된 department.id
         second_place: data.second_place,
         third_place: data.third_place,
-        created_at: data.created_at
-      }
+        created_at: data.created_at,
+      },
     });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: '서버 오류', error: err.message });
+    const status = err.status || 500;
+    console.error('[POST /predictions] error =', err);
+    return res.status(status).json({
+      message: status === 500 ? '서버 오류' : '요청 오류',
+      error: err.message,
+    });
   }
 });
 

@@ -3,35 +3,50 @@ const express = require('express');
 const cors = require('cors');
 const { supabase } = require('../lib/supabaseClient');
 
-// Google Drive 공유 URL → 임베드 가능한 URL로 변환
+
+// Google Drive 공유 URL → googleusercontent 직링크로 변환
 function toEmbedUrl(url) {
   if (!url) return '';
 
-  // 이미 uc?export=view 혹은 /preview 형태면 그대로 사용
-  if (/drive\.google\.com\/uc\?/.test(url) || /drive\.google\.com\/file\/d\/[^/]+\/preview/.test(url)) {
+  // 이미 googleusercontent 링크면 그대로 사용
+  if (/^https?:\/\/lh\d+\.googleusercontent\.com\/d\//i.test(url)) {
     return url;
   }
 
-  // /file/d/{id}/... 패턴
-  const m1 = url.match(/https?:\/\/drive\.google\.com\/file\/d\/([^/]+)/);
-  if (m1 && m1[1]) {
-    const id = m1[1];
-    // 이미지 <img>에 적합 (CORS/캐시 무난)
-    return `https://drive.google.com/uc?export=view&id=${id}`;
-    // iframe이 필요하면 아래를 사용:
-    // return `https://drive.google.com/file/d/${id}/preview`;
+  // 여러 형태의 Drive 링크에서 파일 ID 추출
+  //  - https://drive.google.com/file/d/{ID}/view?...
+  //  - https://drive.google.com/open?id={ID}
+  //  - https://drive.google.com/uc?id={ID}&export=...
+  //  - ...?id={ID}
+  const patterns = [
+    /https?:\/\/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/i,
+    /https?:\/\/drive\.google\.com\/open\?id=([a-zA-Z0-9_-]+)/i,
+    /https?:\/\/drive\.google\.com\/uc\?id=([a-zA-Z0-9_-]+)/i,
+    /[?&]id=([a-zA-Z0-9_-]+)/i
+  ];
+
+  let id = null;
+  for (const re of patterns) {
+    const m = url.match(re);
+    if (m && m[1]) { id = m[1]; break; }
   }
 
-  // open?id= 패턴
-  const m2 = url.match(/[?&]id=([^&]+)/);
-  if (m2 && m2[1]) {
-    const id = m2[1];
-    return `https://drive.google.com/uc?export=view&id=${id}`;
+  // URL 자체가 ID만 들어온 경우도 허용 (선택)
+  if (!id && /^[a-zA-Z0-9_-]{10,}$/.test(url)) {
+    id = url;
   }
 
-  // 기타: 원본 그대로
-  return url;
+  if (!id) {
+    // 드라이브 링크가 아니면 원본 그대로 반환
+    return url;
+  }
+
+  // googleusercontent 직링크로 변환
+  // 필요하면 원본 해상도 유지용 파라미터(=s0)나 리사이즈(=w1600 등) 붙여도 됨.
+  // return `https://lh3.googleusercontent.com/d/${id}=s0`;
+  return `https://lh3.googleusercontent.com/d/${id}`;
 }
+
 
 
 const router = express.Router();
