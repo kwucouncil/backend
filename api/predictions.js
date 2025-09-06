@@ -24,51 +24,41 @@ const corsMiddleware = cors({
 router.options('/', corsMiddleware);
 router.options('/:id', corsMiddleware);
 
-/* ------------------------- 유틸 ------------------------- */
+/* ------------------------- Util ------------------------- */
 const S = (v) => (v == null ? '' : String(v).trim());
 
 class HttpError extends Error {
-  constructor(status, message) {
-    super(message);
-    this.status = status;
-  }
+  constructor(status, message) { super(message); this.status = status; }
 }
 
-const normInput = (v) => {
-  // 단일 선택이어도 프론트 설정에 따라 배열로 올 수 있음 → 첫값만 사용
-  if (Array.isArray(v)) return v.length ? v[0] : '';
-  return v;
-};
+const pickFirst = (v) => (Array.isArray(v) ? (v[0] ?? '') : v);
 
 /** 학과 이름/ID → department.id 정규화 */
 async function resolveDepartmentId(raw) {
-  const value = normInput(raw);
-  if (value == null || value === '') return null;
+  const value = S(pickFirst(raw));
+  if (value === '') return null;
 
-  // 숫자 또는 숫자 문자열
-  const asNum = Number(String(value).trim());
+  // 숫자/숫자문자열이면 그대로
+  const asNum = Number(value);
   if (!Number.isNaN(asNum) && Number.isFinite(asNum)) return asNum;
-
-  // 문자열(학과명) 매칭: 정확 → 부분
-  const q = String(value).trim();
 
   // 정확 일치 (한/영)
   let { data: exact, error: e1 } = await supabase
     .from('department')
     .select('id,name,name_eng')
-    .or(`name.eq.${q},name_eng.eq.${q}`)
+    .or(`name.eq.${value},name_eng.eq.${value}`)
     .limit(1);
   if (e1) throw new HttpError(500, e1.message);
   if (exact?.length) return exact[0].id;
 
-  // 부분 일치 (ilike)
+  // 부분 일치
   const { data: fuzzy, error: e2 } = await supabase
     .from('department')
     .select('id,name,name_eng')
-    .or(`name.ilike.%${q}%,name_eng.ilike.%${q}%`)
+    .or(`name.ilike.%${value}%,name_eng.ilike.%${value}%`)
     .limit(1);
   if (e2) throw new HttpError(500, e2.message);
-  if (!fuzzy?.length) throw new HttpError(400, `학과를 찾을 수 없습니다: "${q}"`);
+  if (!fuzzy?.length) throw new HttpError(400, `학과를 찾을 수 없습니다: "${value}"`);
   return fuzzy[0].id;
 }
 
@@ -76,7 +66,6 @@ async function resolveDepartmentId(raw) {
 /** GET /predictions?page=1&limit=10 */
 router.get('/', corsMiddleware, async (req, res) => {
   try {
-    // 관리자 인증 (API 키)
     const apiKey = req.headers['x-api-key'];
     if (!apiKey || apiKey !== process.env.ADMIN_API_KEY) {
       return res.status(401).json({ message: '관리자 인증이 필요합니다.' });
@@ -94,7 +83,6 @@ router.get('/', corsMiddleware, async (req, res) => {
       .range(from, to);
 
     if (error) throw error;
-
     res.json({ page, limit, total: count || 0, items: data || [] });
   } catch (err) {
     console.error('[GET /predictions] error =', err);
@@ -117,9 +105,7 @@ router.get('/:id', corsMiddleware, async (req, res) => {
       .eq('id', req.params.id)
       .single();
 
-    if (error && error.code === 'PGRST116') {
-      return res.status(404).json({ message: '존재하지 않습니다.' });
-    }
+    if (error && error.code === 'PGRST116') return res.status(404).json({ message: '존재하지 않습니다.' });
     if (error) throw error;
 
     res.json({ data });
@@ -133,48 +119,44 @@ router.get('/:id', corsMiddleware, async (req, res) => {
 /** POST /predictions */
 router.post('/', corsMiddleware, async (req, res) => {
   try {
-    console.log('[POST /predictions] payload =', req.body);
+    console.log('[POST /predictions] raw payload =', req.body);
 
-    const errors = typeof validateCreate === 'function' ? (validateCreate(req.body) || []) : [];
+    // 1) validator가 .trim()을 써도 안전하도록 문자열로 정규화
+    const body = {
+      name:        S(req.body?.name),
+      student_id:  S(req.body?.student_id),
+      phone:       S(req.body?.phone),
+      first_place: S(pickFirst(req.body?.first_place)),
+      second_place:S(pickFirst(req.body?.second_place)),
+      third_place: S(pickFirst(req.body?.third_place)),
+    };
+
+    const errors = typeof validateCreate === 'function' ? (validateCreate(body) || []) : [];
     if (errors.length) {
       return res.status(400).json({ message: '유효성 오류', errors });
     }
 
-    const {
-      name,
-      student_id,
-      phone,
-      first_place,   // 이름 또는 ID(숫자/문자열/배열 가능)
-      second_place,
-      third_place
-    } = req.body;
-
-    // 중복 제출 방지 (같은 학번)
+    // 2) 중복 제출 방지
     const { data: existing, error: checkError } = await supabase
-      .from('predictions')
-      .select('id')
-      .eq('student_id', S(student_id))
-      .single();
-
+      .from('predictions').select('id').eq('student_id', body.student_id).single();
     if (checkError && checkError.code !== 'PGRST116') throw checkError;
-    if (existing) {
-      return res.status(409).json({ message: '이미 제출된 학번입니다. 한 번만 제출 가능합니다.' });
-    }
+    if (existing) return res.status(409).json({ message: '이미 제출된 학번입니다. 한 번만 제출 가능합니다.' });
 
-    // 학과값 → department.id 정규화 (배열/문자열/숫자 모두 허용)
+    // 3) 학과값 → department.id 정규화
     const [firstId, secondId, thirdId] = await Promise.all([
-      resolveDepartmentId(first_place),
-      resolveDepartmentId(second_place),
-      resolveDepartmentId(third_place),
+      resolveDepartmentId(body.first_place),
+      resolveDepartmentId(body.second_place),
+      resolveDepartmentId(body.third_place),
     ]);
 
+    // 4) 저장 (predictions.first/second/third_place = bigint FK)
     const insertPayload = {
-      name: S(name),
-      student_id: S(student_id),
-      phone: S(phone),
-      first_place: firstId,     // bigint FK (department.id)
-      second_place: secondId,   // bigint FK
-      third_place: thirdId,     // bigint FK
+      name: body.name,
+      student_id: body.student_id,
+      phone: body.phone,
+      first_place: firstId,
+      second_place: secondId,
+      third_place: thirdId,
       created_at: new Date().toISOString(),
     };
     console.log('[POST /predictions] insertPayload =', insertPayload);
@@ -186,19 +168,10 @@ router.post('/', corsMiddleware, async (req, res) => {
       .single();
 
     if (error) {
-      // 에러 코드 매핑
-      if (error.code === '23503') {
-        // FK 위반: 존재하지 않는 department.id
-        return res.status(400).json({ message: '존재하지 않는 학과 ID입니다.', detail: error.message });
-      }
-      if (error.code === '23505') {
-        // unique 위반 (예: student_id 유니크 인덱스가 있다면)
-        return res.status(409).json({ message: '이미 제출된 학번입니다.' });
-      }
-      if (error.code === '22P02') {
-        // 타입 변환 오류 (예: TEXT 컬럼인데 숫자 넣으려는 경우)
-        return res.status(400).json({ message: '잘못된 데이터 형식입니다.', detail: error.message });
-      }
+      if (error.code === '23503') return res.status(400).json({ message: '존재하지 않는 학과 ID입니다.', detail: error.message });
+      if (error.code === '23505') return res.status(409).json({ message: '이미 제출된 학번입니다.' });
+      if (error.code === '22P02') return res.status(400).json({ message: '잘못된 데이터 형식입니다.', detail: error.message });
+      if (error.code === '42501' || error.code === 'PGRST301') return res.status(403).json({ message: '권한이 없습니다. (RLS/권한 설정)', detail: error.message });
       throw error;
     }
 
@@ -209,19 +182,24 @@ router.post('/', corsMiddleware, async (req, res) => {
         name: data.name,
         student_id: data.student_id,
         phone: data.phone,
-        first_place: data.first_place,   // 저장된 department.id
+        first_place: data.first_place,   // department.id
         second_place: data.second_place,
         third_place: data.third_place,
         created_at: data.created_at,
       },
     });
   } catch (err) {
+    // .trim 타입 에러를 400으로 매핑
+    if (typeof err?.message === 'string' && err.message.includes('trim is not a function')) {
+      console.error('[POST /predictions] trim-type error:', err);
+      return res.status(400).json({
+        message: '요청 형식 오류',
+        error: 'first_place/second_place/third_place는 문자열 또는 숫자여야 합니다.',
+      });
+    }
     const status = err.status || 500;
     console.error('[POST /predictions] error =', err);
-    return res.status(status).json({
-      message: status === 500 ? '서버 오류' : '요청 오류',
-      error: err.message,
-    });
+    return res.status(status).json({ message: status === 500 ? '서버 오류' : '요청 오류', error: err.message, code: err.code });
   }
 });
 
