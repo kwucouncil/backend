@@ -602,6 +602,103 @@ router.get('/venues', corsMiddleware, async (req, res) => {
   }
 });
 
+
+/**
+ * 최근 경기 결과
+ * GET /api/sports2025/recent-results
+ * 예) /api/sports2025/recent-results?limit=10&sport_id=1
+ */
+router.get('/recent-results', corsMiddleware, async (req, res) => {
+  try {
+    const {
+      limit = 10,
+      sport_id,
+      date_to // 선택, YYYY-MM-DD
+    } = req.query;
+
+    const lim = Math.min(Math.max(parseInt(limit, 10) || 10, 1), 100);
+
+    let query = supabase
+      .from('match')
+      .select(`
+        id,
+        match_date,
+        period_start,
+        is_played,
+        rain_canceled,
+        updated_at,
+        sport:sport_id(id, name, name_eng, is_team_sport),
+        venue:venue_id(id, name, location_note),
+        participations:participation(
+          side,
+          score,
+          department:department(id, name, name_eng, logo_url)
+        )
+      `)
+      .eq('is_played', true);
+
+    // 날짜 제한 (오늘 이전까지)
+    const toDate = date_to || new Date().toISOString().slice(0, 10);
+    query = query.lte('match_date', toDate);
+
+    // 종목 필터
+    if (sport_id) {
+      query = query.eq('sport_id', parseInt(sport_id, 10));
+    }
+
+    // 최신순 정렬
+    query = query
+      .order('match_date', { ascending: false })
+      .order('period_start', { ascending: false })
+      .order('updated_at', { ascending: false, nullsFirst: false })
+      .limit(lim);
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    const items = (data || []).map(m => {
+      const teams = (m.participations || [])
+        .filter(p => p?.department?.id)
+        .map(p => ({
+          side: p.side,
+          score: p.score ?? 0,
+          id: p.department.id,
+          name: p.department.name || '',
+          name_eng: p.department.name_eng || '',
+          logo: toEmbedUrl(p.department.logo_url || ''),
+          logo_raw: p.department.logo_url || ''
+        }));
+
+      const home = teams.find(t => t.side === 'home') || { id:null,name:'',name_eng:'',logo:'',logo_raw:'',score:0 };
+      const away = teams.find(t => t.side === 'away') || { id:null,name:'',name_eng:'',logo:'',logo_raw:'',score:0 };
+
+      let win = null;
+      if (home.id && away.id && home.score !== away.score) {
+        win = home.score > away.score ? 'team1' : 'team2';
+      }
+
+      return {
+        id: m.id,
+        date: m.match_date,
+        start: m.period_start,
+        place: m.venue?.name || '',
+        sport: m.sport?.name || '',
+        team1: { id: home.id, name: home.name, name_eng: home.name_eng, logo: home.logo, logo_raw: home.logo_raw, score: home.score },
+        team2: { id: away.id, name: away.name, name_eng: away.name_eng, logo: away.logo, logo_raw: away.logo_raw, score: away.score },
+        rain: !!m.rain_canceled,
+        result: true,
+        win
+      };
+    });
+
+    res.json({ count: items.length, items });
+  } catch (err) {
+    console.error('최근 경기 결과 오류:', err);
+    res.status(500).json({ message: '서버 오류', error: err.message });
+  }
+});
+
+
 /**
  * 종목별 경기장 정보 조회
  * GET /api/sports2025/sport-venues
