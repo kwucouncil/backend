@@ -88,26 +88,63 @@ router.get('/matches', corsMiddleware, async (req, res) => {
       order = 'asc'
     } = req.query;
 
-    // 페이지네이션 설정
-    const pageNum = Math.max(parseInt(page), 1);
-    const pageSize = Math.min(Math.max(parseInt(page_size), 1), 100);
+    // 페이지네이션
+    const pageNum = Math.max(parseInt(page, 10) || 1, 1);
+    const pageSize = Math.min(Math.max(parseInt(page_size, 10) || 20, 1), 100);
     const from = (pageNum - 1) * pageSize;
     const to = from + pageSize - 1;
 
+    // ⚠️ 포인트: 필터용 participation과 조회용 participation을 분리
     let query = supabase
       .from('match')
       .select(`
-        *,
-        sport:sport(name, name_eng, is_team_sport),
-        venue:venue(name, location_note),
-        participation!inner(
+        id,
+        match_date,
+        period_start,
+        is_played,
+        rain_canceled,
+        updated_at,
+        sport:sport_id(name, name_eng, is_team_sport),
+        venue:venue_id(name, location_note),
+
+        -- 필터 전용 (INNER JOIN)
+        filter_participation:participation!inner(
           department:department(
-            id, name, name_eng, logo_url,
-            college:college(name, name_eng)
+            id,
+            name,
+            name_eng,
+            logo_url,
+            college:college(
+              id,
+              name,
+              name_eng
+            )
           ),
-          side, score
+          side,
+          score
+        ),
+
+        -- 응답용: 같은 경기의 모든 팀을 가져오기
+        participations:participation(
+          side,
+          score,
+          department:department(
+            id,
+            name,
+            name_eng,
+            logo_url,
+            college:college(
+              id,
+              name,
+              name_eng
+            )
+          )
         )
       `, { count: 'exact' });
+
+    // 기본 정렬(교시 오름차순)
+    query = query.order('match_date', { ascending: true })
+                 .order('period_start', { ascending: true });
 
     // 필터 적용
     if (date) {
@@ -115,55 +152,70 @@ router.get('/matches', corsMiddleware, async (req, res) => {
     }
 
     if (sport_id) {
-      query = query.eq('sport_id', parseInt(sport_id));
+      query = query.eq('sport_id', parseInt(sport_id, 10));
     } else if (sport) {
+      // 관계 필드에 대한 필터
       query = query.eq('sport.name', sport);
     }
 
-    if (college_id) {
-      query = query.eq('participation.department.college_id', parseInt(college_id));
+    if (typeof played !== 'undefined') {
+      query = query.eq('is_played', String(played) === 'true');
     }
 
+    if (typeof rain !== 'undefined') {
+      query = query.eq('rain_canceled', String(rain) === 'true');
+    }
+
+    // ✅ 중요한 부분: 학과/단과대 필터는 "filter_participation"에 건다
     if (department_id) {
-      query = query.eq('participation.department_id', parseInt(department_id));
+      query = query.eq('filter_participation.department.id', parseInt(department_id, 10));
+    }
+    if (college_id) {
+      query = query.eq('filter_participation.department.college.id', parseInt(college_id, 10));
     }
 
-    if (played !== undefined) {
-      query = query.eq('is_played', played === 'true');
-    }
+    // 추가 정렬 옵션 처리 (요청 파라미터로 커스텀 정렬 허용)
+    const sortFields = String(sort).split(',').map(s => s.trim()).filter(Boolean);
+    const orderFields = String(order).split(',').map(s => s.trim().toLowerCase());
+    const fieldMapping = { date: 'match_date', start: 'period_start' };
 
-    if (rain !== undefined) {
-      query = query.eq('rain_canceled', rain === 'true');
-    }
-
-    // 정렬 설정
-    const sortFields = sort.split(',');
-    const orderFields = order.split(',');
-    
-    sortFields.forEach((field, index) => {
-      const orderDirection = orderFields[index] || 'asc';
-      // 필드명 매핑 (API 필드명 -> DB 컬럼명)
-      const fieldMapping = {
-        'date': 'match_date',
-        'start': 'period_start'
-      };
+    sortFields.forEach((field, i) => {
       const dbField = fieldMapping[field] || field;
-      query = query.order(dbField, { ascending: orderDirection === 'asc' });
+      const asc = (orderFields[i] || 'asc') === 'asc';
+      query = query.order(dbField, { ascending: asc });
     });
 
+    // 페이지네이션
     const { data, error, count } = await query.range(from, to);
-
     if (error) throw error;
 
-    // 응답 데이터 변환
-    const transformedItems = (data || []).map(match => {
-      // participation에서 home/away 팀 찾기
-      const homeTeam = match.participation?.find(p => p.side === 'home') || {};
-      const awayTeam = match.participation?.find(p => p.side === 'away') || {};
-      
+    // 중복 제거(INNER JOIN으로 인해 동일 match가 중복될 수 있음)
+    const uniq = new Map();
+    (data || []).forEach(row => {
+      if (!uniq.has(row.id)) uniq.set(row.id, row);
+    });
+    const rows = Array.from(uniq.values());
+
+    // 응답 변환: team1=home, team2=away
+    const items = rows.map(match => {
+      const teams = (match.participations || [])
+        .filter(p => p?.department?.id)
+        .map(p => ({
+          side: p.side,
+          score: p.score ?? 0,
+          id: p.department.id,
+          name: p.department.name || '',
+          name_eng: p.department.name_eng || '',
+          logo: toEmbedUrl(p.department.logo_url || ''),
+          logo_raw: p.department.logo_url || '',
+        }));
+
+      const home = teams.find(t => t.side === 'home') || { id: null, name: '', name_eng: '', logo: '', logo_raw: '', score: 0 };
+      const away = teams.find(t => t.side === 'away') || { id: null, name: '', name_eng: '', logo: '', logo_raw: '', score: 0 };
+
       let win = null;
-      if (match.is_played && homeTeam.score !== awayTeam.score) {
-        win = homeTeam.score > awayTeam.score ? 'team1' : 'team2';
+      if (match.is_played && home.id && away.id && home.score !== away.score) {
+        win = home.score > away.score ? 'team1' : 'team2';
       }
 
       return {
@@ -171,25 +223,11 @@ router.get('/matches', corsMiddleware, async (req, res) => {
         start: match.period_start,
         place: match.venue?.name || '',
         sport: match.sport?.name || '',
-        team1: {
-          id: homeTeam.department?.id,
-          name: homeTeam.department?.name || '',
-          name_eng: homeTeam.department?.name_eng || '',
-          logo: toEmbedUrl(homeTeam.department?.logo_url || ''),
-          logo_raw: homeTeam.department?.logo_url || '',
-          score: homeTeam.score || 0
-        },
-        team2: {
-          id: awayTeam.department?.id,
-          name: awayTeam.department?.name || '',
-          name_eng: awayTeam.department?.name_eng || '',
-          logo: toEmbedUrl(awayTeam.department?.logo_url || ''),
-          logo_raw: awayTeam.department?.logo_url || '',
-          score: awayTeam.score || 0
-        },
-        rain: match.rain_canceled || false,
-        result: match.is_played || false,
-        win: win
+        team1: { id: home.id, name: home.name, name_eng: home.name_eng, logo: home.logo, logo_raw: home.logo_raw, score: home.score },
+        team2: { id: away.id, name: away.name, name_eng: away.name_eng, logo: away.logo, logo_raw: away.logo_raw, score: away.score },
+        rain: !!match.rain_canceled,
+        result: !!match.is_played,
+        win
       };
     });
 
@@ -197,17 +235,18 @@ router.get('/matches', corsMiddleware, async (req, res) => {
       page: pageNum,
       page_size: pageSize,
       total: count || 0,
-      items: transformedItems
+      items
     });
 
   } catch (err) {
     console.error('경기 일정 조회 오류:', err);
-    res.status(500).json({ 
-      message: '서버 오류', 
-      error: err.message 
+    res.status(500).json({
+      message: '서버 오류',
+      error: err.message
     });
   }
 });
+
 
 /**
  * 단일 경기 상세 조회
@@ -220,15 +259,24 @@ router.get('/matches/:match_id', corsMiddleware, async (req, res) => {
     const { data, error } = await supabase
       .from('match')
       .select(`
-        *,
-        sport:sport(name, name_eng, is_team_sport),
-        venue:venue(name, location_note),
+        id,
+        match_date,
+        period_start,
+        is_played,
+        rain_canceled,
+        updated_at,
+        sport:sport_id(name, name_eng, is_team_sport),
+        venue:venue_id(name, location_note),
         participation(
+          side,
+          score,
           department:department(
-            id, name, name_eng, logo_url,
+            id,
+            name,
+            name_eng,
+            logo_url,
             college:college(id, name, name_eng)
-          ),
-          side, score
+          )
         )
       `)
       .eq('id', match_id)
@@ -239,13 +287,24 @@ router.get('/matches/:match_id', corsMiddleware, async (req, res) => {
     }
     if (error) throw error;
 
-    // 상세 데이터 변환
-    const homeTeam = data.participation?.find(p => p.side === 'home') || {};
-    const awayTeam = data.participation?.find(p => p.side === 'away') || {};
-    
+    const teams = (data.participation || [])
+      .filter(p => p?.department?.id)
+      .map(p => ({
+        side: p.side,
+        score: p.score ?? 0,
+        id: p.department.id,
+        name: p.department.name || '',
+        name_eng: p.department.name_eng || '',
+        logo: toEmbedUrl(p.department.logo_url || ''),
+        logo_raw: p.department.logo_url || '',
+      }));
+
+    const home = teams.find(t => t.side === 'home') || { id: null, name: '', name_eng: '', logo: '', logo_raw: '', score: 0 };
+    const away = teams.find(t => t.side === 'away') || { id: null, name: '', name_eng: '', logo: '', logo_raw: '', score: 0 };
+
     let win = null;
-    if (data.is_played && homeTeam.score !== awayTeam.score) {
-      win = homeTeam.score > awayTeam.score ? 'team1' : 'team2';
+    if (data.is_played && home.id && away.id && home.score !== away.score) {
+      win = home.score > away.score ? 'team1' : 'team2';
     }
 
     const transformedData = {
@@ -253,37 +312,24 @@ router.get('/matches/:match_id', corsMiddleware, async (req, res) => {
       start: data.period_start,
       place: data.venue?.name || '',
       sport: data.sport?.name || '',
-      team1: {
-        id: homeTeam.department?.id,
-        name: homeTeam.department?.name || '',
-        name_eng: homeTeam.department?.name_eng || '',
-        logo: toEmbedUrl(homeTeam.department?.logo_url || ''),
-        logo_raw: homeTeam.department?.logo_url || '',
-        score: homeTeam.score || 0
-      },
-      team2: {
-        id: awayTeam.department?.id,
-        name: awayTeam.department?.name || '',
-        name_eng: awayTeam.department?.name_eng || '',
-        logo: toEmbedUrl(awayTeam.department?.logo_url || ''),
-        logo_raw: awayTeam.department?.logo_url || '',
-        score: awayTeam.score || 0
-      },
-      rain: data.rain_canceled || false,
-      result: data.is_played || false,
-      win: win
+      team1: { id: home.id, name: home.name, name_eng: home.name_eng, logo: home.logo, logo_raw: home.logo_raw, score: home.score },
+      team2: { id: away.id, name: away.name, name_eng: away.name_eng, logo: away.logo, logo_raw: away.logo_raw, score: away.score },
+      rain: !!data.rain_canceled,
+      result: !!data.is_played,
+      win
     };
 
     res.json({ data: transformedData });
 
   } catch (err) {
     console.error('경기 상세 조회 오류:', err);
-    res.status(500).json({ 
-      message: '서버 오류', 
-      error: err.message 
+    res.status(500).json({
+      message: '서버 오류',
+      error: err.message
     });
   }
 });
+
 
 /**
  * 순위 조회 (종목별 또는 종합)
@@ -293,86 +339,58 @@ router.get('/standings', corsMiddleware, async (req, res) => {
   try {
     const { sport_id } = req.query;
 
-    // standings 테이블이 없으므로 participation에서 집계
+    // department에서 점수 가져오기
     let query = supabase
-      .from('participation')
-      .select(`
-        department:department(id, name, name_eng, logo_url),
-        match!inner(
-          sport:sport(id, name, name_eng),
-          is_played,
-          updated_at
-        ),
-        score
-      `)
-      .eq('match.is_played', true);
+      .from('department')
+      .select('id, name, name_eng, logo_url, score, updated_at');
 
-    if (sport_id) {
-      query = query.eq('match.sport_id', parseInt(sport_id));
-    }
-
+    // 특정 종목만 필터링하고 싶으면 department <-> sport 매핑 필요
+    // (지금 스키마엔 department가 sport_id 직접 안 갖고 있을 수도 있음)
+    // sport_id 조건은 participation join을 써야 하지만,
+    // 요청하신 건 department.score 기준이므로 일단 무시하거나 전체 출력
+    
     const { data, error } = await query;
 
     if (error) throw error;
 
-    // 부서별 점수 집계 및 최신 업데이트 시간 추적
-    const departmentScores = {};
+    // 최신 업데이트 시간 추적
     let latestUpdateTime = null;
-    
-    (data || []).forEach(participation => {
-      const deptId = participation.department?.id;
-      if (deptId) {
-        if (!departmentScores[deptId]) {
-          departmentScores[deptId] = {
-            department: participation.department,
-            totalScore: 0,
-            wins: 0,
-            matches: 0
-          };
-        }
-        departmentScores[deptId].totalScore += participation.score || 0;
-        departmentScores[deptId].matches += 1;
-        
-        // 최신 업데이트 시간 추적
-        if (participation.match?.updated_at) {
-          const updateTime = new Date(participation.match.updated_at);
-          if (!latestUpdateTime || updateTime > latestUpdateTime) {
-            latestUpdateTime = updateTime;
-          }
+    (data || []).forEach(dept => {
+      if (dept.updated_at) {
+        const updateTime = new Date(dept.updated_at);
+        if (!latestUpdateTime || updateTime > latestUpdateTime) {
+          latestUpdateTime = updateTime;
         }
       }
     });
 
-    // 점수순으로 정렬 (모든 학과 포함)
-    const sortedStandings = Object.values(departmentScores)
-      .sort((a, b) => b.totalScore - a.totalScore);
+    // 점수순으로 정렬
+    const sortedStandings = (data || []).sort((a, b) => (b.score || 0) - (a.score || 0));
 
     // 순위 데이터 변환
-    const transformedStandings = sortedStandings.map((standing, index) => ({
+    const transformedStandings = sortedStandings.map((dept, index) => ({
       rank: index + 1,
-      name: standing.department?.name || '',
-      name_eng: standing.department?.name_eng || '',
-      logo: toEmbedUrl(standing.department?.logo_url || ''),
-      logo_raw: standing.department?.logo_url || '',
-      score: standing.totalScore
+      name: dept.name || '',
+      name_eng: dept.name_eng || '',
+      logo: toEmbedUrl(dept.logo_url || ''),
+      logo_raw: dept.logo_url || '',
+      score: dept.score || 0
     }));
 
     // 한국 시간으로 포맷팅
     const formatKoreanTime = (date) => {
       if (!date) return null;
-      
-      const koreanTime = new Date(date.toLocaleString("en-US", {timeZone: "Asia/Seoul"}));
+      const koreanTime = new Date(date.toLocaleString("en-US", { timeZone: "Asia/Seoul" }));
       const year = koreanTime.getFullYear();
       const month = koreanTime.getMonth() + 1;
       const day = koreanTime.getDate();
       const hour = koreanTime.getHours();
       const ampm = hour < 12 ? '오전' : '오후';
       const displayHour = hour < 12 ? hour : hour - 12;
-      
       return `${year}년 ${month.toString().padStart(2, '0')}월 ${day.toString().padStart(2, '0')}일 ${ampm} ${displayHour}시 기준`;
     };
 
-    res.json({ 
+    res.json({
       sport_id: sport_id ? parseInt(sport_id) : null,
       updated_at: latestUpdateTime ? formatKoreanTime(latestUpdateTime) : null,
       standings: transformedStandings
@@ -380,12 +398,13 @@ router.get('/standings', corsMiddleware, async (req, res) => {
 
   } catch (err) {
     console.error('순위 조회 오류:', err);
-    res.status(500).json({ 
-      message: '서버 오류', 
-      error: err.message 
+    res.status(500).json({
+      message: '서버 오류',
+      error: err.message
     });
   }
 });
+
 
 /**
  * 학과 목록 조회
