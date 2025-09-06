@@ -3,6 +3,37 @@ const express = require('express');
 const cors = require('cors');
 const { supabase } = require('../lib/supabaseClient');
 
+// Google Drive 공유 URL → 임베드 가능한 URL로 변환
+function toEmbedUrl(url) {
+  if (!url) return '';
+
+  // 이미 uc?export=view 혹은 /preview 형태면 그대로 사용
+  if (/drive\.google\.com\/uc\?/.test(url) || /drive\.google\.com\/file\/d\/[^/]+\/preview/.test(url)) {
+    return url;
+  }
+
+  // /file/d/{id}/... 패턴
+  const m1 = url.match(/https?:\/\/drive\.google\.com\/file\/d\/([^/]+)/);
+  if (m1 && m1[1]) {
+    const id = m1[1];
+    // 이미지 <img>에 적합 (CORS/캐시 무난)
+    return `https://drive.google.com/uc?export=view&id=${id}`;
+    // iframe이 필요하면 아래를 사용:
+    // return `https://drive.google.com/file/d/${id}/preview`;
+  }
+
+  // open?id= 패턴
+  const m2 = url.match(/[?&]id=([^&]+)/);
+  if (m2 && m2[1]) {
+    const id = m2[1];
+    return `https://drive.google.com/uc?export=view&id=${id}`;
+  }
+
+  // 기타: 원본 그대로
+  return url;
+}
+
+
 const router = express.Router();
 
 const corsMiddleware = cors({
@@ -128,15 +159,17 @@ router.get('/matches', corsMiddleware, async (req, res) => {
         team1: {
           id: homeTeam.department?.id,
           name: homeTeam.department?.name || '',
-          name_eng: homeTeam.department?.name_en || '',
-          logo: homeTeam.department?.logo_url || '',
+          name_eng: homeTeam.department?.name_eng || '',
+          logo: toEmbedUrl(homeTeam.department?.logo_url || ''),
+          logo_raw: homeTeam.department?.logo_url || '',
           score: homeTeam.score || 0
         },
         team2: {
           id: awayTeam.department?.id,
           name: awayTeam.department?.name || '',
-          name_eng: awayTeam.department?.name_en || '',
-          logo: awayTeam.department?.logo_url || '',
+          name_eng: awayTeam.department?.name_eng || '',
+          logo: toEmbedUrl(awayTeam.department?.logo_url || ''),
+          logo_raw: awayTeam.department?.logo_url || '',
           score: awayTeam.score || 0
         },
         rain: match.rain_canceled || false,
@@ -209,14 +242,16 @@ router.get('/matches/:match_id', corsMiddleware, async (req, res) => {
         id: homeTeam.department?.id,
         name: homeTeam.department?.name || '',
         name_eng: homeTeam.department?.name_eng || '',
-        logo: homeTeam.department?.logo_url || '',
+        logo: toEmbedUrl(homeTeam.department?.logo_url || ''),
+        logo_raw: homeTeam.department?.logo_url || '',
         score: homeTeam.score || 0
       },
       team2: {
         id: awayTeam.department?.id,
         name: awayTeam.department?.name || '',
         name_eng: awayTeam.department?.name_eng || '',
-        logo: awayTeam.department?.logo_url || '',
+        logo: toEmbedUrl(awayTeam.department?.logo_url || ''),
+        logo_raw: awayTeam.department?.logo_url || '',
         score: awayTeam.score || 0
       },
       rain: data.rain_canceled || false,
@@ -302,7 +337,8 @@ router.get('/standings', corsMiddleware, async (req, res) => {
       rank: index + 1,
       name: standing.department?.name || '',
       name_eng: standing.department?.name_eng || '',
-      logo: standing.department?.logo_url || '',
+      logo: toEmbedUrl(standing.department?.logo_url || ''),
+      logo_raw: standing.department?.logo_url || '',
       score: standing.totalScore
     }));
 
@@ -340,9 +376,10 @@ router.get('/standings', corsMiddleware, async (req, res) => {
  * 학과 목록 조회
  * GET /api/sports2025/departments
  */
+// GET /api/sports2025/departments
 router.get('/departments', corsMiddleware, async (req, res) => {
   try {
-    const { college_id, search } = req.query;
+    const { college_id, search, embed } = req.query;
 
     let query = supabase
       .from('department')
@@ -350,34 +387,52 @@ router.get('/departments', corsMiddleware, async (req, res) => {
         *,
         college:college(name, name_eng)
       `)
-      .order('name');
+      .order('name', { ascending: true });
 
     if (college_id) {
-      query = query.eq('college_id', parseInt(college_id));
+      query = query.eq('college_id', parseInt(college_id, 10));
     }
 
     if (search) {
+      // name 또는 name_eng 부분 일치 (대소문자 무시)
       query = query.or(`name.ilike.%${search}%,name_eng.ilike.%${search}%`);
     }
 
     const { data, error } = await query;
-
     if (error) throw error;
 
-    res.json({ 
-      college_id: college_id ? parseInt(college_id) : null,
-      search: search || null,
-      departments: data || [] 
+    const useEmbedOnLogoField =
+      String(embed).toLowerCase() === 'true' || String(embed) === '1';
+
+    // 임베드 URL 필드 추가 (+ 필요 시 logo_url 자체도 임베드로 교체)
+    const departments = (data || []).map((d) => {
+      const embedUrl = toEmbedUrl(d.logo_url || '');
+      return useEmbedOnLogoField
+        ? {
+            ...d,
+            logo_url: embedUrl,          // 요청 시 원본 필드도 임베드로 교체
+            logo_url_embed: embedUrl,    // 항상 별도 임베드 필드 제공
+          }
+        : {
+            ...d,
+            logo_url_embed: embedUrl,    // 기본은 원본 유지 + 임베드 추가
+          };
     });
 
+    res.json({
+      college_id: college_id ? parseInt(college_id, 10) : null,
+      search: search || null,
+      departments
+    });
   } catch (err) {
     console.error('학과 목록 조회 오류:', err);
-    res.status(500).json({ 
-      message: '서버 오류', 
-      error: err.message 
+    res.status(500).json({
+      message: '서버 오류',
+      error: err.message
     });
   }
 });
+
 
 /**
  * 단과대학 목록 조회
@@ -440,7 +495,8 @@ router.get('/futsal-standings', corsMiddleware, async (req, res) => {
         *,
         department:department(id, name, name_eng, logo_url)
       `)
-      .order('group_name, points', { ascending: [true, false] });
+      .order('group_name', { ascending: true })
+      .order('points', { ascending: false });
 
     const { data, error } = await query;
 
@@ -459,7 +515,8 @@ router.get('/futsal-standings', corsMiddleware, async (req, res) => {
         rank: standing.rank || 0,
         name: standing.department?.name || '',
         name_eng: standing.department?.name_eng || '',
-        logo: standing.department?.logo_url || '',
+        logo: toEmbedUrl(standing.department?.logo_url || ''),
+        logo_raw: standing.department?.logo_url || '',
         group: standing.group_name || 'A조',
         matches: standing.matches || 0,
         wins: standing.wins || 0,
@@ -467,7 +524,7 @@ router.get('/futsal-standings', corsMiddleware, async (req, res) => {
         losses: standing.losses || 0,
         goals_for: standing.goals_for || 0,
         goals_against: standing.goals_against || 0,
-        goal_difference: standing.goal_difference || 0,
+        goal_difference: (standing.goals_for || 0) - (standing.goals_against || 0),
         points: standing.points || 0,
         wildcard: standing.wildcard || false
       });
