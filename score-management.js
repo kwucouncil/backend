@@ -1,8 +1,8 @@
 // score-management.js
 class ScoreManagement {
     constructor() {
-        this.apiBaseUrl = 'https://kwu-hoempage-backend.onrender.com/api/sports2025';
-        this.scoreApiUrl = 'https://kwu-hoempage-backend.onrender.com/api/scoreManagement';
+        this.apiBaseUrl = 'https://kwu-hoempage-backend.onrender.com/sports2025';
+        this.scoreApiUrl = 'https://kwu-hoempage-backend.onrender.com/scoreManagement';
         this.currentPage = 1;
         this.pageSize = 10;
         this.totalPages = 1;
@@ -136,8 +136,11 @@ class ScoreManagement {
         const homeTeam = match.team1 || { name: 'TBD', score: 0 };
         const awayTeam = match.team2 || { name: 'TBD', score: 0 };
 
+        // 고유 식별자 생성 (날짜_시간_팀1ID_팀2ID)
+        const matchId = `${match.date}_${match.start}_${homeTeam.id || '0'}_${awayTeam.id || '0'}`;
+
         return `
-            <div class="match-card" data-match-id="${match.id || 'unknown'}">
+            <div class="match-card" data-match-id="${matchId}">
                 <div class="match-header">
                     <div class="match-info">
                         <div class="match-date">${this.formatDate(match.date)} ${match.start}시</div>
@@ -161,11 +164,11 @@ class ScoreManagement {
                 </div>
 
                 <div class="match-actions">
-                    <button class="btn btn-primary" onclick="scoreManagement.openScoreModal('${match.id || 'unknown'}')" disabled>
-                        점수 수정 (준비중)
+                    <button class="btn btn-primary" onclick="scoreManagement.openScoreModal('${matchId}')">
+                        점수 수정
                     </button>
-                    <button class="btn btn-secondary" onclick="scoreManagement.openStatusModal('${match.id || 'unknown'}')" disabled>
-                        상태 수정 (준비중)
+                    <button class="btn btn-secondary" onclick="scoreManagement.openStatusModal('${matchId}')">
+                        상태 수정
                     </button>
                 </div>
             </div>
@@ -230,11 +233,21 @@ class ScoreManagement {
 
     async openScoreModal(matchId) {
         try {
-            const response = await fetch(`${this.apiBaseUrl}/matches/${matchId}`);
-            if (!response.ok) throw new Error('경기 정보를 불러올 수 없습니다.');
+            console.log('Looking for matchId:', matchId);
             
-            const data = await response.json();
-            const match = data.data;
+            // 고유 식별자로 경기 찾기
+            const match = this.matches.find(m => {
+                const homeTeam = m.team1 || { id: '0' };
+                const awayTeam = m.team2 || { id: '0' };
+                const generatedId = `${m.date}_${m.start}_${homeTeam.id}_${awayTeam.id}`;
+                return generatedId === matchId;
+            });
+            
+            if (!match) {
+                console.log('Match not found. Available matches:', this.matches.length);
+                this.showError('경기 정보를 찾을 수 없습니다.');
+                return;
+            }
             
             document.getElementById('modalMatchId').value = matchId;
             document.getElementById('modalHomeScore').value = match.team1?.score || 0;
@@ -251,11 +264,18 @@ class ScoreManagement {
 
     async openStatusModal(matchId) {
         try {
-            const response = await fetch(`${this.apiBaseUrl}/matches/${matchId}`);
-            if (!response.ok) throw new Error('경기 정보를 불러올 수 없습니다.');
+            // 고유 식별자로 경기 찾기
+            const match = this.matches.find(m => {
+                const homeTeam = m.team1 || { id: '0' };
+                const awayTeam = m.team2 || { id: '0' };
+                const generatedId = `${m.date}_${m.start}_${homeTeam.id}_${awayTeam.id}`;
+                return generatedId === matchId;
+            });
             
-            const data = await response.json();
-            const match = data.data;
+            if (!match) {
+                this.showError('경기 정보를 찾을 수 없습니다.');
+                return;
+            }
             
             document.getElementById('statusModalMatchId').value = matchId;
             document.getElementById('statusModalIsPlayed').checked = match.result;
@@ -277,27 +297,41 @@ class ScoreManagement {
             const isPlayed = document.getElementById('modalIsPlayed').checked;
             const adminNote = document.getElementById('modalAdminNote').value;
 
-            const response = await fetch(`${this.scoreApiUrl}/matches/${matchId}/scores`, {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    home_score: homeScore,
-                    away_score: awayScore,
-                    is_played: isPlayed,
-                    admin_note: adminNote
-                })
-            });
+            // 입력 검증
+            if (isNaN(homeScore) || isNaN(awayScore)) {
+                this.showError('점수는 숫자여야 합니다.');
+                return;
+            }
 
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.message || '점수 업데이트에 실패했습니다.');
+            if (homeScore < 0 || awayScore < 0) {
+                this.showError('점수는 0 이상이어야 합니다.');
+                return;
+            }
+
+            // 임시: 로컬에서 경기 정보 업데이트 (서버 API 준비 전까지)
+            const matchIndex = this.matches.findIndex(m => {
+                const homeTeam = m.team1 || { id: '0' };
+                const awayTeam = m.team2 || { id: '0' };
+                const generatedId = `${m.date}_${m.start}_${homeTeam.id}_${awayTeam.id}`;
+                return generatedId === matchId;
+            });
+            
+            if (matchIndex !== -1) {
+                this.matches[matchIndex].team1.score = homeScore;
+                this.matches[matchIndex].team2.score = awayScore;
+                this.matches[matchIndex].result = isPlayed;
+                
+                // 승부 결정
+                if (isPlayed && homeScore !== awayScore) {
+                    this.matches[matchIndex].win = homeScore > awayScore ? 'team1' : 'team2';
+                } else {
+                    this.matches[matchIndex].win = null;
+                }
             }
 
             this.closeScoreModal();
-            this.showSuccess('점수가 성공적으로 업데이트되었습니다.');
-            this.loadMatches();
+            this.showSuccess('점수가 성공적으로 업데이트되었습니다. (로컬 저장 - 서버 연동 준비중)');
+            this.renderMatches(); // 화면 다시 그리기
             
         } catch (error) {
             console.error('점수 업데이트 오류:', error);
@@ -312,6 +346,7 @@ class ScoreManagement {
             const rainCanceled = document.getElementById('statusModalRainCanceled').checked;
             const adminNote = document.getElementById('statusModalAdminNote').value;
 
+            // 서버에 상태 업데이트 요청
             const response = await fetch(`${this.scoreApiUrl}/matches/${matchId}/status`, {
                 method: 'PUT',
                 headers: {
@@ -331,7 +366,7 @@ class ScoreManagement {
 
             this.closeStatusModal();
             this.showSuccess('경기 상태가 성공적으로 업데이트되었습니다.');
-            this.loadMatches();
+            this.loadMatches(); // 서버에서 최신 데이터 다시 로드
             
         } catch (error) {
             console.error('상태 업데이트 오류:', error);

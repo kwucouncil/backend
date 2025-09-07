@@ -25,8 +25,16 @@ const corsMiddleware = cors({
 app.use(express.json());
 app.use(corsMiddleware);
 
+// 정적 파일 서빙 (HTML, CSS, JS 파일)
+app.use(express.static('.'));
+
 // 헬스체크
 app.get('/', (_, res) => res.send('OK'));
+
+// 점수 관리 페이지
+app.get('/score-management', (_, res) => {
+  res.sendFile(__dirname + '/../score-management.html');
+});
 
 // ✅ 라우트 연결 (이미 구현됨)
 app.use('/upload', require('./upload'));          // /upload 라우터
