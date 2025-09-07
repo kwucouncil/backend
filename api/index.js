@@ -11,12 +11,14 @@ const corsMiddleware = cors({
     const allow = [
       'https://kwucouncil.github.io',
       'http://localhost:8080',
+      'http://127.0.0.1:5500',
+      'http://localhost:5500',
       'https://www.kwu-studentcouncil52.com',
     ];
     if (!origin || allow.includes(origin)) return cb(null, true);
     cb(new Error('CORS 정책 위반'));
   },
-  methods: ['GET','POST','OPTIONS'],
+  methods: ['GET','POST','PUT','OPTIONS'],
   allowedHeaders: ['Content-Type','X-Requested-With'],
 });
 
