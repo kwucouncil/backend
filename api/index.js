@@ -32,6 +32,7 @@ app.use('/announcements', require('./announcements')); // /announcements 라우�
 app.use('/minutes', require('./minutes'));        // /minutes 라우터
 app.use('/predictions', require('./predictions')); // /predictions 라우터
 app.use('/sports2025', require('./sports2025'));  // /sports2025 라우터
+app.use('/scoreManagement', require('./scoreManagement')); // /scoreManagement 라우터
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`API listening on :${PORT}`));
