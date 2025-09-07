@@ -308,30 +308,35 @@ class ScoreManagement {
                 return;
             }
 
-            // 임시: 로컬에서 경기 정보 업데이트 (서버 API 준비 전까지)
-            const matchIndex = this.matches.findIndex(m => {
-                const homeTeam = m.team1 || { id: '0' };
-                const awayTeam = m.team2 || { id: '0' };
-                const generatedId = `${m.date}_${m.start}_${homeTeam.id}_${awayTeam.id}`;
-                return generatedId === matchId;
+            // 서버에 점수 업데이트 요청
+            const response = await fetch(`${this.scoreApiUrl}/matches/${matchId}/scores`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    home_score: homeScore,
+                    away_score: awayScore,
+                    is_played: isPlayed,
+                    admin_note: adminNote
+                })
             });
-            
-            if (matchIndex !== -1) {
-                this.matches[matchIndex].team1.score = homeScore;
-                this.matches[matchIndex].team2.score = awayScore;
-                this.matches[matchIndex].result = isPlayed;
-                
-                // 승부 결정
-                if (isPlayed && homeScore !== awayScore) {
-                    this.matches[matchIndex].win = homeScore > awayScore ? 'team1' : 'team2';
-                } else {
-                    this.matches[matchIndex].win = null;
+
+            if (!response.ok) {
+                let errorMessage = '점수 업데이트에 실패했습니다.';
+                try {
+                    const errorData = await response.json();
+                    errorMessage = errorData.message || errorMessage;
+                } catch (e) {
+                    // JSON 파싱 실패 시 기본 메시지 사용
+                    errorMessage = `서버 오류 (${response.status}): ${response.statusText}`;
                 }
+                throw new Error(errorMessage);
             }
 
             this.closeScoreModal();
-            this.showSuccess('점수가 성공적으로 업데이트되었습니다. (로컬 저장 - 서버 연동 준비중)');
-            this.renderMatches(); // 화면 다시 그리기
+            this.showSuccess('점수가 성공적으로 업데이트되었습니다.');
+            this.loadMatches(); // 서버에서 최신 데이터 다시 로드
             
         } catch (error) {
             console.error('점수 업데이트 오류:', error);
@@ -360,8 +365,15 @@ class ScoreManagement {
             });
 
             if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.message || '상태 업데이트에 실패했습니다.');
+                let errorMessage = '상태 업데이트에 실패했습니다.';
+                try {
+                    const errorData = await response.json();
+                    errorMessage = errorData.message || errorMessage;
+                } catch (e) {
+                    // JSON 파싱 실패 시 기본 메시지 사용
+                    errorMessage = `서버 오류 (${response.status}): ${response.statusText}`;
+                }
+                throw new Error(errorMessage);
             }
 
             this.closeStatusModal();
