@@ -324,14 +324,17 @@ class ScoreManagement {
 
             if (!response.ok) {
                 let errorMessage = '점수 업데이트에 실패했습니다.';
+                let errorDetails = '';
                 try {
                     const errorData = await response.json();
                     errorMessage = errorData.message || errorMessage;
+                    errorDetails = errorData.details || errorData.error || '';
+                    console.error('서버 오류 상세:', errorData);
                 } catch (e) {
                     // JSON 파싱 실패 시 기본 메시지 사용
                     errorMessage = `서버 오류 (${response.status}): ${response.statusText}`;
                 }
-                throw new Error(errorMessage);
+                throw new Error(`${errorMessage}${errorDetails ? '\n상세: ' + errorDetails : ''}`);
             }
 
             this.closeScoreModal();

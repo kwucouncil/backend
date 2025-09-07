@@ -33,7 +33,7 @@ app.get('/', (_, res) => res.send('OK'));
 
 // 점수 관리 페이지
 app.get('/score-management', (_, res) => {
-  res.sendFile(__dirname + '/../score-management.html');
+  res.sendFile(require('path').join(__dirname, '..', 'score-management.html'));
 });
 
 // ✅ 라우트 연결 (이미 구현됨)

@@ -220,11 +220,60 @@ router.put('/matches/:match_id/scores', corsMiddleware, async (req, res) => {
       return res.status(400).json({ message: '점수는 0 이상이어야 합니다.' });
     }
 
+    // 고유 식별자 파싱 (날짜_시간_팀1ID_팀2ID)
+    let actualMatchId = match_id;
+    if (match_id.includes('_')) {
+      const parts = match_id.split('_');
+      if (parts.length >= 4) {
+        const date = parts[0];
+        const time = parseInt(parts[1]);
+        const team1Id = parseInt(parts[2]);
+        const team2Id = parseInt(parts[3]);
+        
+        console.log('파싱된 정보:', { date, time, team1Id, team2Id });
+        
+        // 실제 match ID 찾기
+        const { data: matchData, error: matchError } = await supabase
+          .from('match')
+          .select(`
+            id, 
+            match_date, 
+            period_start,
+            participations:participation(id, side, department_id)
+          `)
+          .eq('match_date', date)
+          .eq('period_start', time);
+          
+        if (matchError) {
+          console.error('경기 조회 오류:', matchError);
+          return res.status(404).json({ message: '경기를 찾을 수 없습니다.' });
+        }
+        
+        if (!matchData || matchData.length === 0) {
+          return res.status(404).json({ message: '해당 날짜와 시간의 경기를 찾을 수 없습니다.' });
+        }
+        
+        // 여러 경기가 있을 수 있으므로 팀 ID로 필터링
+        const targetMatch = matchData.find(match => {
+          const homeTeam = match.participations?.find(p => p.side === 'home');
+          const awayTeam = match.participations?.find(p => p.side === 'away');
+          return homeTeam?.department_id === team1Id && awayTeam?.department_id === team2Id;
+        });
+        
+        if (!targetMatch) {
+          return res.status(404).json({ message: '해당 팀들의 경기를 찾을 수 없습니다.' });
+        }
+        
+        actualMatchId = targetMatch.id;
+        console.log('찾은 실제 match ID:', actualMatchId);
+      }
+    }
+
     // 경기 존재 확인
     const { data: matchData, error: matchError } = await supabase
       .from('match')
       .select('id, participations:participation(id, side)')
-      .eq('id', match_id)
+      .eq('id', actualMatchId)
       .single();
 
     if (matchError && matchError.code === 'PGRST116') {
@@ -297,7 +346,13 @@ router.put('/matches/:match_id/scores', corsMiddleware, async (req, res) => {
 
   } catch (err) {
     console.error('점수 업데이트 오류:', err);
-    res.status(500).json({ message: '서버 오류', error: err.message });
+    console.error('요청 데이터:', { match_id, home_score, away_score, is_played, admin_note });
+    res.status(500).json({ 
+      message: '서버 오류', 
+      error: err.message,
+      details: err.stack,
+      request_data: { match_id, home_score, away_score, is_played, admin_note }
+    });
   }
 });
 
@@ -309,6 +364,40 @@ router.put('/matches/:match_id/status', corsMiddleware, async (req, res) => {
   try {
     const { match_id } = req.params;
     const { is_played, rain_canceled, admin_note } = req.body;
+
+    // 고유 식별자 파싱 (날짜_시간_팀1ID_팀2ID)
+    let actualMatchId = match_id;
+    if (match_id.includes('_')) {
+      const parts = match_id.split('_');
+      if (parts.length >= 4) {
+        const date = parts[0];
+        const time = parts[1];
+        const team1Id = parts[2];
+        const team2Id = parts[3];
+        
+        // 실제 match ID 찾기
+        const { data: matchData, error: matchError } = await supabase
+          .from('match')
+          .select('id, participations:participation(id, side, department_id)')
+          .eq('match_date', date)
+          .eq('period_start', parseInt(time))
+          .single();
+          
+        if (matchError) {
+          return res.status(404).json({ message: '경기를 찾을 수 없습니다.' });
+        }
+        
+        // 팀 ID 확인
+        const homeTeam = matchData.participations?.find(p => p.side === 'home');
+        const awayTeam = matchData.participations?.find(p => p.side === 'away');
+        
+        if (homeTeam?.department_id != team1Id || awayTeam?.department_id != team2Id) {
+          return res.status(404).json({ message: '경기 정보가 일치하지 않습니다.' });
+        }
+        
+        actualMatchId = matchData.id;
+      }
+    }
 
     const updateData = {
       updated_at: new Date().toISOString()
@@ -329,7 +418,7 @@ router.put('/matches/:match_id/status', corsMiddleware, async (req, res) => {
     const { data, error } = await supabase
       .from('match')
       .update(updateData)
-      .eq('id', match_id)
+      .eq('id', actualMatchId)
       .select('id, is_played, rain_canceled, admin_note')
       .single();
 
