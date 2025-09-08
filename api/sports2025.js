@@ -59,6 +59,7 @@ const corsMiddleware = cors({
       'http://127.0.0.1:5500',
       'http://localhost:5500',
       'https://www.kwu-studentcouncil52.com',
+      'https://kwu-hoempage-backend.onrender.com',
     ];
     if (!origin || allow.includes(origin)) return cb(null, true);
     cb(new Error('CORS 정책 위반'));
