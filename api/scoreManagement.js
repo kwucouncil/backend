@@ -13,6 +13,8 @@ const corsMiddleware = cors({
       'http://127.0.0.1:5500',
       'http://localhost:5500',
       'https://www.kwu-studentcouncil52.com',
+      'https://admin-kwu-2025-sports.onrender.com',
+      'https://admin-kwu-2025-sports.onrender.com/score-management',
     ];
     if (!origin || allow.includes(origin)) return cb(null, true);
     cb(new Error('CORS 정책 위반'));
@@ -501,3 +503,4 @@ router.get('/departments', corsMiddleware, async (req, res) => {
 });
 
 module.exports = router;
+
