@@ -60,7 +60,6 @@ const corsMiddleware = cors({
       'http://localhost:5500',
       'https://www.kwu-studentcouncil52.com',
       'https://admin-kwu-2025-sports.onrender.com',
-      'https://admin-kwu-2025-sports.onrender.com/score-management',
     ];
     if (!origin || allow.includes(origin)) return cb(null, true);
     cb(new Error('CORS 정책 위반'));
@@ -768,4 +767,3 @@ router.get('/sport-venues', corsMiddleware, async (req, res) => {
 });
 
 module.exports = router;
-
