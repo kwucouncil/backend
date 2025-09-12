@@ -116,11 +116,13 @@ router.get('/matches', corsMiddleware, async (req, res) => {
             college:college(id,name,name_eng)
           ),
           side,
-          score
+          score,
+          abstention
         ),
         participations:participation(
           side,
           score,
+          abstention,
           department:department(
             id,name,name_eng,logo_url,
             college_id,
@@ -176,6 +178,7 @@ router.get('/matches', corsMiddleware, async (req, res) => {
         .map(p => ({
           side: p.side,
           score: p.score ?? 0,
+          abstention: !!p.abstention,
           id: p.department.id,
           name: p.department.name || '',
           name_eng: p.department.name_eng || '',
@@ -196,8 +199,8 @@ router.get('/matches', corsMiddleware, async (req, res) => {
         start: m.period_start,
         place: m.venue?.name || '',
         sport: m.sport?.name || '',
-        team1: { id: home.id, name: home.name, name_eng: home.name_eng, logo: home.logo, logo_raw: home.logo_raw, score: home.score },
-        team2: { id: away.id, name: away.name, name_eng: away.name_eng, logo: away.logo, logo_raw: away.logo_raw, score: away.score },
+        team1: { id: home.id, name: home.name, name_eng: home.name_eng, logo: home.logo, logo_raw: home.logo_raw, score: home.score, abstention: home.abstention ?? false },
+        team2: { id: away.id, name: away.name, name_eng: away.name_eng, logo: away.logo, logo_raw: away.logo_raw, score: away.score, abstention: away.abstention ?? false },
         rain: !!m.rain_canceled,
         result: !!m.is_played,
         win
@@ -235,6 +238,7 @@ router.get('/matches/:match_id', corsMiddleware, async (req, res) => {
         participation(
           side,
           score,
+          abstention,
           department:department(
             id,
             name,
@@ -257,6 +261,7 @@ router.get('/matches/:match_id', corsMiddleware, async (req, res) => {
       .map(p => ({
         side: p.side,
         score: p.score ?? 0,
+        abstention: !!p.abstention,
         id: p.department.id,
         name: p.department.name || '',
         name_eng: p.department.name_eng || '',
@@ -277,8 +282,8 @@ router.get('/matches/:match_id', corsMiddleware, async (req, res) => {
       start: data.period_start,
       place: data.venue?.name || '',
       sport: data.sport?.name || '',
-      team1: { id: home.id, name: home.name, name_eng: home.name_eng, logo: home.logo, logo_raw: home.logo_raw, score: home.score },
-      team2: { id: away.id, name: away.name, name_eng: away.name_eng, logo: away.logo, logo_raw: away.logo_raw, score: away.score },
+      team1: { id: home.id, name: home.name, name_eng: home.name_eng, logo: home.logo, logo_raw: home.logo_raw, score: home.score, abstention: home.abstention ?? false },
+      team2: { id: away.id, name: away.name, name_eng: away.name_eng, logo: away.logo, logo_raw: away.logo_raw, score: away.score, abstention: away.abstention ?? false },
       rain: !!data.rain_canceled,
       result: !!data.is_played,
       win
@@ -635,6 +640,7 @@ router.get('/recent-results', corsMiddleware, async (req, res) => {
         participations:participation(
           side,
           score,
+          abstention,
           department:department(id, name, name_eng, logo_url)
         )
       `)
@@ -665,6 +671,7 @@ router.get('/recent-results', corsMiddleware, async (req, res) => {
         .map(p => ({
           side: p.side,
           score: p.score ?? 0,
+          abstention: !!p.abstention,
           id: p.department.id,
           name: p.department.name || '',
           name_eng: p.department.name_eng || '',
@@ -686,8 +693,8 @@ router.get('/recent-results', corsMiddleware, async (req, res) => {
         start: m.period_start,
         place: m.venue?.name || '',
         sport: m.sport?.name || '',
-        team1: { id: home.id, name: home.name, name_eng: home.name_eng, logo: home.logo, logo_raw: home.logo_raw, score: home.score },
-        team2: { id: away.id, name: away.name, name_eng: away.name_eng, logo: away.logo, logo_raw: away.logo_raw, score: away.score },
+        team1: { id: home.id, name: home.name, name_eng: home.name_eng, logo: home.logo, logo_raw: home.logo_raw, score: home.score, abstention: home.abstention ?? false },
+        team2: { id: away.id, name: away.name, name_eng: away.name_eng, logo: away.logo, logo_raw: away.logo_raw, score: away.score, abstention: away.abstention ?? false },
         rain: !!m.rain_canceled,
         result: true,
         win
