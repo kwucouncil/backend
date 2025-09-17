@@ -105,13 +105,14 @@ router.get('/matches', corsMiddleware, async (req, res) => {
         period_start,
         is_played,
         rain_canceled,
+        group_name,
         updated_at,
         sport:sport_id(name,name_eng,is_team_sport),
         venue:venue_id(name,location_note),
         filter_participation:participation!inner(
           department_id,
           department:department(
-            id,name,name_eng,logo_url,group_name,
+            id,name,name_eng,logo_url,
             college_id,
             college:college(id,name,name_eng)
           ),
@@ -124,7 +125,7 @@ router.get('/matches', corsMiddleware, async (req, res) => {
           score,
           abstention,
           department:department(
-            id,name,name_eng,logo_url,group_name,
+            id,name,name_eng,logo_url,
             college_id,
             college:college(id,name,name_eng)
           )
@@ -182,13 +183,12 @@ router.get('/matches', corsMiddleware, async (req, res) => {
           id: p.department.id,
           name: p.department.name || '',
           name_eng: p.department.name_eng || '',
-          group_name: p.department.group_name || '',
           logo: toEmbedUrl(p.department.logo_url || ''),
           logo_raw: p.department.logo_url || ''
         }));
 
-      const home = teams.find(t => t.side === 'home') || { id:null,name:'',name_eng:'',group_name:'',logo:'',logo_raw:'',score:0 };
-      const away = teams.find(t => t.side === 'away') || { id:null,name:'',name_eng:'',group_name:'',logo:'',logo_raw:'',score:0 };
+      const home = teams.find(t => t.side === 'home') || { id:null,name:'',name_eng:'',logo:'',logo_raw:'',score:0 };
+      const away = teams.find(t => t.side === 'away') || { id:null,name:'',name_eng:'',logo:'',logo_raw:'',score:0 };
 
       let win = null;
       if (m.is_played && home.id && away.id && home.score !== away.score) {
@@ -200,11 +200,12 @@ router.get('/matches', corsMiddleware, async (req, res) => {
         start: m.period_start,
         place: m.venue?.name || '',
         sport: m.sport?.name || '',
-        team1: { id: home.id, name: home.name, name_eng: home.name_eng, group_name: home.group_name, logo: home.logo, logo_raw: home.logo_raw, score: home.score, abstention: home.abstention ?? false },
-        team2: { id: away.id, name: away.name, name_eng: away.name_eng, group_name: away.group_name, logo: away.logo, logo_raw: away.logo_raw, score: away.score, abstention: away.abstention ?? false },
+        team1: { id: home.id, name: home.name, name_eng: home.name_eng, logo: home.logo, logo_raw: home.logo_raw, score: home.score, abstention: home.abstention ?? false },
+        team2: { id: away.id, name: away.name, name_eng: away.name_eng, logo: away.logo, logo_raw: away.logo_raw, score: away.score, abstention: away.abstention ?? false },
         rain: !!m.rain_canceled,
         result: !!m.is_played,
-        win
+        win,
+        group_name: m.group_name || ''
       };
     });
 
@@ -233,6 +234,7 @@ router.get('/matches/:match_id', corsMiddleware, async (req, res) => {
         period_start,
         is_played,
         rain_canceled,
+        group_name,
         updated_at,
         sport:sport_id(name, name_eng, is_team_sport),
         venue:venue_id(name, location_note),
@@ -245,7 +247,6 @@ router.get('/matches/:match_id', corsMiddleware, async (req, res) => {
             name,
             name_eng,
             logo_url,
-            group_name,
             college:college(id, name, name_eng)
           )
         )
@@ -267,13 +268,12 @@ router.get('/matches/:match_id', corsMiddleware, async (req, res) => {
         id: p.department.id,
         name: p.department.name || '',
         name_eng: p.department.name_eng || '',
-        group_name: p.department.group_name || '',
         logo: toEmbedUrl(p.department.logo_url || ''),
         logo_raw: p.department.logo_url || '',
       }));
 
-    const home = teams.find(t => t.side === 'home') || { id: null, name: '', name_eng: '', group_name: '', logo: '', logo_raw: '', score: 0 };
-    const away = teams.find(t => t.side === 'away') || { id: null, name: '', name_eng: '', group_name: '', logo: '', logo_raw: '', score: 0 };
+    const home = teams.find(t => t.side === 'home') || { id: null, name: '', name_eng: '', logo: '', logo_raw: '', score: 0 };
+    const away = teams.find(t => t.side === 'away') || { id: null, name: '', name_eng: '', logo: '', logo_raw: '', score: 0 };
 
     let win = null;
     if (data.is_played && home.id && away.id && home.score !== away.score) {
@@ -289,7 +289,8 @@ router.get('/matches/:match_id', corsMiddleware, async (req, res) => {
       team2: { id: away.id, name: away.name, name_eng: away.name_eng, logo: away.logo, logo_raw: away.logo_raw, score: away.score, abstention: away.abstention ?? false },
       rain: !!data.rain_canceled,
       result: !!data.is_played,
-      win
+      win,
+      group_name: data.group_name || ''
     };
 
     res.json({ data: transformedData });
@@ -637,6 +638,7 @@ router.get('/recent-results', corsMiddleware, async (req, res) => {
         period_start,
         is_played,
         rain_canceled,
+        group_name,
         updated_at,
         sport:sport_id(id, name, name_eng, is_team_sport),
         venue:venue_id(id, name, location_note),
@@ -644,7 +646,7 @@ router.get('/recent-results', corsMiddleware, async (req, res) => {
           side,
           score,
           abstention,
-          department:department(id, name, name_eng, logo_url, group_name)
+          department:department(id, name, name_eng, logo_url)
         )
       `)
       .eq('is_played', true);
@@ -678,13 +680,12 @@ router.get('/recent-results', corsMiddleware, async (req, res) => {
           id: p.department.id,
           name: p.department.name || '',
           name_eng: p.department.name_eng || '',
-          group_name: p.department.group_name || '',
           logo: toEmbedUrl(p.department.logo_url || ''),
           logo_raw: p.department.logo_url || ''
         }));
 
-      const home = teams.find(t => t.side === 'home') || { id:null,name:'',name_eng:'',group_name:'',logo:'',logo_raw:'',score:0 };
-      const away = teams.find(t => t.side === 'away') || { id:null,name:'',name_eng:'',group_name:'',logo:'',logo_raw:'',score:0 };
+      const home = teams.find(t => t.side === 'home') || { id:null,name:'',name_eng:'',logo:'',logo_raw:'',score:0 };
+      const away = teams.find(t => t.side === 'away') || { id:null,name:'',name_eng:'',logo:'',logo_raw:'',score:0 };
 
       let win = null;
       if (home.id && away.id && home.score !== away.score) {
@@ -697,11 +698,12 @@ router.get('/recent-results', corsMiddleware, async (req, res) => {
         start: m.period_start,
         place: m.venue?.name || '',
         sport: m.sport?.name || '',
-        team1: { id: home.id, name: home.name, name_eng: home.name_eng, group_name: home.group_name, logo: home.logo, logo_raw: home.logo_raw, score: home.score, abstention: home.abstention ?? false },
-        team2: { id: away.id, name: away.name, name_eng: away.name_eng, group_name: away.group_name, logo: away.logo, logo_raw: away.logo_raw, score: away.score, abstention: away.abstention ?? false },
+        team1: { id: home.id, name: home.name, name_eng: home.name_eng, logo: home.logo, logo_raw: home.logo_raw, score: home.score, abstention: home.abstention ?? false },
+        team2: { id: away.id, name: away.name, name_eng: away.name_eng, logo: away.logo, logo_raw: away.logo_raw, score: away.score, abstention: away.abstention ?? false },
         rain: !!m.rain_canceled,
         result: true,
-        win
+        win,
+        group_name: m.group_name || ''
       };
     });
 
