@@ -86,7 +86,7 @@ router.get('/matches', corsMiddleware, async (req, res) => {
       played,
       rain,
       page = 1,
-      page_size = 20,
+      page_size = 100,
       sort = 'date,start',
       order = 'asc'
     } = req.query;

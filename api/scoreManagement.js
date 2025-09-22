@@ -37,11 +37,11 @@ router.get('/matches', corsMiddleware, async (req, res) => {
       sport_id, 
       is_played, 
       page = 1, 
-      page_size = 20 
+      page_size = 100 
     } = req.query;
 
     const pageNum = Math.max(parseInt(page, 10) || 1, 1);
-    const pageSize = Math.min(Math.max(parseInt(page_size, 10) || 20, 1), 100);
+    const pageSize = Math.min(Math.max(parseInt(page_size, 10) || 100, 1), 100);
     const from = (pageNum - 1) * pageSize;
     const to = from + pageSize - 1;
 
@@ -350,7 +350,10 @@ router.put('/matches/:match_id/scores', corsMiddleware, async (req, res) => {
 
     // 풋살 리그전 점수 자동 업데이트 (경기가 완료된 경우에만)
     if (is_played === true) {
+      console.log('경기 완료됨 - 풋살 리그전 점수 업데이트 시작');
       await updateFutsalStandings(actualMatchId, home_score, away_score);
+    } else {
+      console.log('경기가 완료되지 않음 - 풋살 리그전 점수 업데이트 건너뜀. is_played:', is_played);
     }
 
     res.json({ 
@@ -525,6 +528,8 @@ router.get('/departments', corsMiddleware, async (req, res) => {
  */
 async function updateFutsalStandings(matchId, homeScore, awayScore) {
   try {
+    console.log(`풋살 리그전 업데이트 시작 - Match ID: ${matchId}, 점수: ${homeScore} vs ${awayScore}`);
+    
     // 경기 정보 조회 (풋살인지, 리그전인지 확인)
     const { data: matchData, error: matchError } = await supabase
       .from('match')
@@ -547,19 +552,28 @@ async function updateFutsalStandings(matchId, homeScore, awayScore) {
       return;
     }
 
+    console.log('경기 데이터:', {
+      id: matchData.id,
+      sport_id: matchData.sport_id,
+      is_league: matchData.is_league,
+      group_name: matchData.group_name
+    });
+
     // 풋살 경기가 아니면 무시 (sport_id = 1이 풋살)
     if (matchData.sport_id !== 1) {
+      console.log('풋살 경기가 아니므로 조별리그 계산을 건너뜁니다. sport_id:', matchData.sport_id);
       return;
     }
 
-    // is_league가 false이면 조별리그 계산하지 않음
-    if (matchData.is_league === false) {
-      console.log('is_league가 false이므로 조별리그 계산을 건너뜁니다.');
+    // is_league가 명시적으로 true가 아니면 조별리그 계산하지 않음
+    if (matchData.is_league !== true) {
+      console.log('is_league가 true가 아니므로 조별리그 계산을 건너뜁니다. 현재 값:', matchData.is_league);
       return;
     }
 
     // 리그전 경기가 아니면 무시 (group_name이 있으면 리그전)
     if (!matchData.group_name) {
+      console.log('group_name이 없으므로 조별리그 계산을 건너뜁니다.');
       return;
     }
 
