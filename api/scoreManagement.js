@@ -54,6 +54,7 @@ router.get('/matches', corsMiddleware, async (req, res) => {
         is_played,
         rain_canceled,
         admin_note,
+        group_name,
         created_at,
         updated_at,
         sport:sport_id(id, name, name_eng),
@@ -62,6 +63,7 @@ router.get('/matches', corsMiddleware, async (req, res) => {
           id,
           side,
           score,
+          abstention,
           department:department(
             id,
             name,
@@ -97,17 +99,20 @@ router.get('/matches', corsMiddleware, async (req, res) => {
         is_played: match.is_played,
         rain_canceled: match.rain_canceled,
         admin_note: match.admin_note,
+        group_name: match.group_name || '',
         home_team: homeTeam ? {
           id: homeTeam.id,
           department_id: homeTeam.department?.id,
           name: homeTeam.department?.name || '',
-          score: homeTeam.score || 0
+          score: homeTeam.score || 0,
+          abstention: homeTeam.abstention || false
         } : null,
         away_team: awayTeam ? {
           id: awayTeam.id,
           department_id: awayTeam.department?.id,
           name: awayTeam.department?.name || '',
-          score: awayTeam.score || 0
+          score: awayTeam.score || 0,
+          abstention: awayTeam.abstention || false
         } : null,
         created_at: match.created_at,
         updated_at: match.updated_at
@@ -152,11 +157,13 @@ router.get('/matches/:match_id', corsMiddleware, async (req, res) => {
           id,
           side,
           score,
+          abstention,
           department:department(
             id,
             name,
             name_eng,
-            logo_url
+            logo_url,
+            group_name
           )
         )
       `)
@@ -180,17 +187,20 @@ router.get('/matches/:match_id', corsMiddleware, async (req, res) => {
       is_played: data.is_played,
       rain_canceled: data.rain_canceled,
       admin_note: data.admin_note,
+      group_name: data.group_name || '',
       home_team: homeTeam ? {
         id: homeTeam.id,
         department_id: homeTeam.department?.id,
         name: homeTeam.department?.name || '',
-        score: homeTeam.score || 0
+        score: homeTeam.score || 0,
+        abstention: homeTeam.abstention || false
       } : null,
       away_team: awayTeam ? {
         id: awayTeam.id,
         department_id: awayTeam.department?.id,
         name: awayTeam.department?.name || '',
-        score: awayTeam.score || 0
+        score: awayTeam.score || 0,
+        abstention: awayTeam.abstention || false
       } : null,
       created_at: data.created_at,
       updated_at: data.updated_at
@@ -336,6 +346,11 @@ router.put('/matches/:match_id/scores', corsMiddleware, async (req, res) => {
     // 에러 확인
     for (const result of results) {
       if (result.error) throw result.error;
+    }
+
+    // 풋살 리그전 점수 자동 업데이트 (경기가 완료된 경우에만)
+    if (is_played === true) {
+      await updateFutsalStandings(actualMatchId, home_score, away_score);
     }
 
     res.json({ 
@@ -501,6 +516,132 @@ router.get('/departments', corsMiddleware, async (req, res) => {
     res.status(500).json({ message: '서버 오류', error: err.message });
   }
 });
+
+/**
+ * 풋살 리그전 점수 자동 업데이트 함수
+ * @param {number} matchId - 경기 ID
+ * @param {number} homeScore - 홈팀 점수
+ * @param {number} awayScore - 어웨이팀 점수
+ */
+async function updateFutsalStandings(matchId, homeScore, awayScore) {
+  try {
+    // 경기 정보 조회 (풋살인지, 리그전인지 확인)
+    const { data: matchData, error: matchError } = await supabase
+      .from('match')
+      .select(`
+        id,
+        sport_id,
+        group_name,
+        is_league,
+        participations:participation(
+          side,
+          score,
+          department:department(id, name)
+        )
+      `)
+      .eq('id', matchId)
+      .single();
+
+    if (matchError) {
+      console.error('풋살 리그전 업데이트 - 경기 조회 오류:', matchError);
+      return;
+    }
+
+    // 풋살 경기가 아니면 무시 (sport_id = 1이 풋살)
+    if (matchData.sport_id !== 1) {
+      return;
+    }
+
+    // is_league가 false이면 조별리그 계산하지 않음
+    if (matchData.is_league === false) {
+      console.log('is_league가 false이므로 조별리그 계산을 건너뜁니다.');
+      return;
+    }
+
+    // 리그전 경기가 아니면 무시 (group_name이 있으면 리그전)
+    if (!matchData.group_name) {
+      return;
+    }
+
+    const homeTeam = matchData.participations?.find(p => p.side === 'home');
+    const awayTeam = matchData.participations?.find(p => p.side === 'away');
+
+    if (!homeTeam || !awayTeam) {
+      console.error('풋살 리그전 업데이트 - 팀 정보 없음');
+      return;
+    }
+
+    // 각 팀의 현재 리그전 기록 조회
+    const { data: homeStanding, error: homeError } = await supabase
+      .from('futsal_standings')
+      .select('*')
+      .eq('department_id', homeTeam.department.id)
+      .single();
+
+    const { data: awayStanding, error: awayError } = await supabase
+      .from('futsal_standings')
+      .select('*')
+      .eq('department_id', awayTeam.department.id)
+      .single();
+
+    if (homeError || awayError) {
+      console.error('풋살 리그전 업데이트 - 순위 조회 오류:', homeError || awayError);
+      return;
+    }
+
+    // 홈팀 업데이트
+    const homeUpdates = calculateStandingUpdates(homeStanding, homeScore, awayScore);
+    await supabase
+      .from('futsal_standings')
+      .update(homeUpdates)
+      .eq('department_id', homeTeam.department.id);
+
+    // 어웨이팀 업데이트
+    const awayUpdates = calculateStandingUpdates(awayStanding, awayScore, homeScore);
+    await supabase
+      .from('futsal_standings')
+      .update(awayUpdates)
+      .eq('department_id', awayTeam.department.id);
+
+    console.log(`풋살 리그전 점수 업데이트 완료: ${homeTeam.department.name} vs ${awayTeam.department.name}`);
+
+  } catch (err) {
+    console.error('풋살 리그전 점수 업데이트 오류:', err);
+  }
+}
+
+/**
+ * 리그전 기록 계산 함수
+ * @param {Object} currentStanding - 현재 순위 기록
+ * @param {number} goalsFor - 득점
+ * @param {number} goalsAgainst - 실점
+ * @returns {Object} 업데이트할 기록
+ */
+function calculateStandingUpdates(currentStanding, goalsFor, goalsAgainst) {
+  const updates = {
+    matches: (currentStanding.matches || 0) + 1,
+    goals_for: (currentStanding.goals_for || 0) + goalsFor,
+    goals_against: (currentStanding.goals_against || 0) + goalsAgainst,
+    goal_difference: ((currentStanding.goals_for || 0) + goalsFor) - ((currentStanding.goals_against || 0) + goalsAgainst)
+  };
+
+  // 승부 결과에 따른 업데이트
+  if (goalsFor > goalsAgainst) {
+    // 승리
+    updates.wins = (currentStanding.wins || 0) + 1;
+    updates.points = (currentStanding.points || 0) + 3;
+  } else if (goalsFor === goalsAgainst) {
+    // 무승부
+    updates.draws = (currentStanding.draws || 0) + 1;
+    updates.points = (currentStanding.points || 0) + 1;
+  } else {
+    // 패배
+    updates.losses = (currentStanding.losses || 0) + 1;
+    updates.points = currentStanding.points || 0;
+  }
+
+  return updates;
+}
 
 module.exports = router;
 

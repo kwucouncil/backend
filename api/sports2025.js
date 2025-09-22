@@ -86,13 +86,13 @@ router.get('/matches', corsMiddleware, async (req, res) => {
       played,
       rain,
       page = 1,
-      page_size = 100,
+      page_size = 20,
       sort = 'date,start',
       order = 'asc'
     } = req.query;
 
     const pageNum = Math.max(parseInt(page, 10) || 1, 1);
-    const pageSize = Math.min(Math.max(parseInt(page_size, 10) || 100, 1), 100);
+    const pageSize = Math.min(Math.max(parseInt(page_size, 10) || 20, 1), 100);
     const from = (pageNum - 1) * pageSize;
     const to = from + pageSize - 1;
 
